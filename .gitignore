@@ -1,0 +1,7 @@
+# File locali da non pubblicare
+.DS_Store
+Thumbs.db
+node_modules/
+.supabase/
+.env
+*.local

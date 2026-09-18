@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Portale Zoffoli — Valutazione Acquisti</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ═══════════ HEADER ═══════════ -->
+  <header class="topbar" id="topbar" hidden>
+    <div class="topbar-inner">
+      <div class="brand">
+        <img src="img/logo.png" alt="Zoffoli Metalli" class="brand-logo">
+        <span class="brand-name">Portale Zoffoli</span>
+      </div>
+      <button class="btn btn-ghost" id="btn-logout">Esci</button>
+    </div>
+  </header>
+
+  <main id="app">
+
+    <!-- ═══════════ VISTA: LOGIN ═══════════ -->
+    <section id="view-login" class="view" hidden>
+      <div class="login-card">
+        <img src="img/logo.png" alt="Zoffoli Metalli" class="login-logo-img">
+        <h1>Portale Zoffoli</h1>
+        <p class="login-sub">Valutazione acquisti macchinari</p>
+        <form id="form-login">
+          <label for="login-password">Password aziendale</label>
+          <input type="password" id="login-password" autocomplete="current-password" required placeholder="Inserisci la password">
+          <button type="submit" class="btn btn-primary btn-block" id="btn-login">Entra</button>
+          <p class="form-error" id="login-error" hidden></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ═══════════ VISTA: ELENCO PROGETTI ═══════════ -->
+    <section id="view-progetti" class="view" hidden>
+      <div class="page-head">
+        <h1>I tuoi progetti</h1>
+        <button class="btn btn-primary" id="btn-nuovo-progetto">+ Nuovo progetto</button>
+      </div>
+
+      <form id="form-nuovo-progetto" class="card form-inline" hidden>
+        <div class="form-row">
+          <div class="form-field grow">
+            <label for="np-nome">Nome del progetto *</label>
+            <input type="text" id="np-nome" required placeholder="Es. Acquisto tornio CNC">
+          </div>
+          <div class="form-field grow">
+            <label for="np-descrizione">Descrizione (facoltativa)</label>
+            <input type="text" id="np-descrizione" placeholder="Es. Sostituzione macchina reparto 2">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Crea progetto</button>
+          <button type="button" class="btn btn-ghost" id="btn-annulla-progetto">Annulla</button>
+        </div>
+      </form>
+
+      <div id="lista-progetti" class="grid-progetti"></div>
+      <p id="progetti-vuoto" class="empty-note" hidden>
+        Nessun progetto ancora. Crea il primo con il pulsante qui sopra. 👆
+      </p>
+    </section>
+
+    <!-- ═══════════ VISTA: DETTAGLIO PROGETTO ═══════════ -->
+    <section id="view-progetto" class="view" hidden>
+      <button class="btn btn-ghost btn-back" id="btn-indietro">← Tutti i progetti</button>
+      <div class="page-head">
+        <div>
+          <h1 id="progetto-nome"></h1>
+          <p class="muted" id="progetto-descrizione"></p>
+        </div>
+        <button class="btn btn-danger-ghost" id="btn-elimina-progetto">Elimina progetto</button>
+      </div>
+
+      <div class="layout-2col">
+
+        <!-- Colonna documenti -->
+        <div class="col">
+          <div class="card">
+            <h2>📄 Documenti</h2>
+            <p class="hint">Carica le schede tecniche del macchinario e i preventivi ricevuti (file PDF).</p>
+
+            <form id="form-upload">
+              <div class="form-field">
+                <label for="up-file">File PDF *</label>
+                <input type="file" id="up-file" accept="application/pdf" required>
+              </div>
+              <div class="form-row">
+                <div class="form-field grow">
+                  <label for="up-tipo">Tipo documento *</label>
+                  <select id="up-tipo" required>
+                    <option value="preventivo">Preventivo</option>
+                    <option value="scheda_tecnica">Scheda tecnica</option>
+                    <option value="altro">Altro</option>
+                  </select>
+                </div>
+                <div class="form-field grow">
+                  <label for="up-fornitore">Ditta / fornitore</label>
+                  <input type="text" id="up-fornitore" placeholder="Es. Rossi Macchine Srl">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary" id="btn-upload">Carica documento</button>
+              <p class="form-error" id="upload-error" hidden></p>
+            </form>
+
+            <ul id="lista-documenti" class="doc-list"></ul>
+            <p id="documenti-vuoto" class="empty-note" hidden>Nessun documento caricato.</p>
+          </div>
+        </div>
+
+        <!-- Colonna analisi -->
+        <div class="col">
+          <div class="card">
+            <h2>🤖 Analisi intelligente</h2>
+            <p class="hint">
+              L'assistente AI legge tutti i documenti e ti dice, con parole semplici,
+              quale offerta conviene e quali manutenzioni servono.
+            </p>
+            <button class="btn btn-accent btn-block" id="btn-analizza">✨ Analizza i documenti</button>
+            <p class="form-error" id="analisi-error" hidden></p>
+            <div id="analisi-loading" class="loading" hidden>
+              <div class="spinner"></div>
+              <p>Sto leggendo i documenti…<br><small>Può richiedere 1–3 minuti. Non chiudere la pagina.</small></p>
+            </div>
+          </div>
+
+          <div id="analisi-risultato" hidden></div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>Portale Zoffoli · uso interno aziendale</p>
+  </footer>
+
+  <!-- Supabase JS (client ufficiale) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

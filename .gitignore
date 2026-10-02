@@ -2,6 +2,6 @@
 .DS_Store
 Thumbs.db
 node_modules/
-.supabase/
+data/
 .env
 *.local

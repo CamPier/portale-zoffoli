@@ -1,0 +1,20 @@
+{
+  "name": "portale-zoffoli",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Portale Zoffoli — backend (Express + SQLite + Claude Code CLI)",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "password": "node imposta-password.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "express": "^5.1.0",
+    "multer": "^2.0.2"
+  }
+}

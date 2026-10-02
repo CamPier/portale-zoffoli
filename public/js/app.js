@@ -2,13 +2,36 @@
 //  Portale Zoffoli — logica applicazione
 // ═══════════════════════════════════════════════════════════════
 
-const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
-
 // Stato corrente
 let progettoCorrente = null;
+let timerAnalisi = null;
 
 // Scorciatoia
 const $ = (id) => document.getElementById(id);
+
+// Chiamata alle API del server. Restituisce il JSON della risposta;
+// in caso di errore lancia un Error con il messaggio del server.
+async function api(metodo, url, corpo) {
+  const opzioni = { method: metodo, headers: {} };
+  if (corpo instanceof FormData) {
+    opzioni.body = corpo;
+  } else if (corpo !== undefined) {
+    opzioni.headers["Content-Type"] = "application/json";
+    opzioni.body = JSON.stringify(corpo);
+  }
+  const risposta = await fetch(url, opzioni);
+  let dati = null;
+  try { dati = await risposta.json(); } catch (_) { /* risposta senza JSON */ }
+
+  if (risposta.status === 401 && url !== "/api/login") {
+    fermaControlloAnalisi();
+    mostraVista("view-login");
+  }
+  if (!risposta.ok) {
+    throw new Error((dati && dati.errore) || `Errore del server (${risposta.status})`);
+  }
+  return dati;
+}
 
 // ─────────────────────────────────────────────
 //  Navigazione tra viste
@@ -25,16 +48,9 @@ function mostraVista(nome) {
 //  Avvio
 // ─────────────────────────────────────────────
 async function init() {
-  if (CONFIG.SUPABASE_URL.includes("TUO-PROGETTO")) {
-    document.body.innerHTML =
-      '<div style="max-width:560px;margin:80px auto;font-family:sans-serif;background:#fffbeb;border:1px solid #d97706;border-radius:12px;padding:28px">' +
-      "<h2>⚙️ Configurazione mancante</h2>" +
-      "<p>Apri il file <code>js/config.js</code> e inserisci l'URL e la anon key del tuo progetto Supabase. Le istruzioni sono nel file README.md.</p></div>";
-    return;
-  }
-
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
+  let sessione = { autenticato: false };
+  try { sessione = await api("GET", "/api/sessione"); } catch (_) { /* server non raggiungibile: mostra il login */ }
+  if (sessione.autenticato) {
     await caricaProgetti();
     mostraVista("view-progetti");
   } else {
@@ -53,18 +69,15 @@ $("form-login").addEventListener("submit", async (e) => {
   btn.disabled = true;
   btn.textContent = "Accesso in corso…";
 
-  const { error } = await sb.auth.signInWithPassword({
-    email: CONFIG.LOGIN_EMAIL,
-    password: $("login-password").value,
-  });
-
-  btn.disabled = false;
-  btn.textContent = "Entra";
-
-  if (error) {
-    err.textContent = "Password errata. Riprova.";
+  try {
+    await api("POST", "/api/login", { password: $("login-password").value });
+  } catch (ex) {
+    err.textContent = ex.message;
     err.hidden = false;
     return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Entra";
   }
   $("login-password").value = "";
   await caricaProgetti();
@@ -72,7 +85,8 @@ $("form-login").addEventListener("submit", async (e) => {
 });
 
 $("btn-logout").addEventListener("click", async () => {
-  await sb.auth.signOut();
+  fermaControlloAnalisi();
+  try { await api("POST", "/api/logout"); } catch (_) { /* esce comunque */ }
   mostraVista("view-login");
 });
 
@@ -80,12 +94,10 @@ $("btn-logout").addEventListener("click", async () => {
 //  Progetti
 // ─────────────────────────────────────────────
 async function caricaProgetti() {
-  const { data, error } = await sb
-    .from("progetti")
-    .select("*")
-    .order("creato_il", { ascending: false });
-
-  if (error) { alert("Errore nel caricare i progetti: " + error.message); return; }
+  let data;
+  try { data = await api("GET", "/api/progetti"); } catch (ex) {
+    alert("Errore nel caricare i progetti: " + ex.message); return;
+  }
 
   const lista = $("lista-progetti");
   lista.innerHTML = "";
@@ -113,11 +125,12 @@ $("btn-annulla-progetto").addEventListener("click", () => {
 
 $("form-nuovo-progetto").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const { error } = await sb.from("progetti").insert({
-    nome: $("np-nome").value.trim(),
-    descrizione: $("np-descrizione").value.trim() || null,
-  });
-  if (error) { alert("Errore nella creazione: " + error.message); return; }
+  try {
+    await api("POST", "/api/progetti", {
+      nome: $("np-nome").value.trim(),
+      descrizione: $("np-descrizione").value.trim() || null,
+    });
+  } catch (ex) { alert("Errore nella creazione: " + ex.message); return; }
   $("np-nome").value = "";
   $("np-descrizione").value = "";
   $("form-nuovo-progetto").hidden = true;
@@ -132,21 +145,19 @@ $("btn-elimina-progetto").addEventListener("click", async () => {
   );
   if (!ok) return;
 
-  // Elimina prima i file dallo storage
-  const { data: docs } = await sb.from("documenti").select("storage_path")
-    .eq("progetto_id", progettoCorrente.id);
-  if (docs && docs.length > 0) {
-    await sb.storage.from("documenti").remove(docs.map((d) => d.storage_path));
+  // Il server elimina anche i PDF e le analisi del progetto
+  try { await api("DELETE", `/api/progetti/${progettoCorrente.id}`); } catch (ex) {
+    alert("Errore nell'eliminazione: " + ex.message); return;
   }
-  const { error } = await sb.from("progetti").delete().eq("id", progettoCorrente.id);
-  if (error) { alert("Errore nell'eliminazione: " + error.message); return; }
 
+  fermaControlloAnalisi();
   progettoCorrente = null;
   await caricaProgetti();
   mostraVista("view-progetti");
 });
 
 $("btn-indietro").addEventListener("click", async () => {
+  fermaControlloAnalisi();
   progettoCorrente = null;
   await caricaProgetti();
   mostraVista("view-progetti");
@@ -162,9 +173,11 @@ async function apriProgetto(p) {
   $("analisi-error").hidden = true;
   $("analisi-risultato").hidden = true;
   $("analisi-risultato").innerHTML = "";
+  ultimaAnalisiMostrata = null;
+  analisiInAttesa = false;
   mostraVista("view-progetto");
   await caricaDocumenti();
-  await caricaUltimaAnalisi();
+  await controllaAnalisi();
 }
 
 // ─────────────────────────────────────────────
@@ -177,13 +190,10 @@ const ETICHETTE_TIPO = {
 };
 
 async function caricaDocumenti() {
-  const { data, error } = await sb
-    .from("documenti")
-    .select("*")
-    .eq("progetto_id", progettoCorrente.id)
-    .order("caricato_il", { ascending: true });
-
-  if (error) { alert("Errore nel caricare i documenti: " + error.message); return; }
+  let data;
+  try { data = await api("GET", `/api/progetti/${progettoCorrente.id}/documenti`); } catch (ex) {
+    alert("Errore nel caricare i documenti: " + ex.message); return;
+  }
 
   const ul = $("lista-documenti");
   ul.innerHTML = "";
@@ -239,23 +249,12 @@ $("form-upload").addEventListener("submit", async (e) => {
   btn.textContent = "Caricamento…";
 
   try {
-    // Percorso univoco nello storage: progettoId/timestamp-nomefile
-    const nomePulito = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${progettoCorrente.id}/${Date.now()}-${nomePulito}`;
-
-    const { error: errUp } = await sb.storage.from("documenti").upload(path, file, {
-      contentType: "application/pdf",
-    });
-    if (errUp) throw errUp;
-
-    const { error: errDb } = await sb.from("documenti").insert({
-      progetto_id: progettoCorrente.id,
-      nome_file: file.name,
-      tipo: $("up-tipo").value,
-      fornitore: $("up-fornitore").value.trim() || null,
-      storage_path: path,
-    });
-    if (errDb) throw errDb;
+    const fd = new FormData();
+    fd.append("nome_file", file.name);
+    fd.append("tipo", $("up-tipo").value);
+    fd.append("fornitore", $("up-fornitore").value.trim());
+    fd.append("file", file);
+    await api("POST", `/api/progetti/${progettoCorrente.id}/documenti`, fd);
 
     $("form-upload").reset();
     await caricaDocumenti();
@@ -268,18 +267,16 @@ $("form-upload").addEventListener("submit", async (e) => {
   }
 });
 
-async function apriDocumento(doc) {
-  const { data, error } = await sb.storage.from("documenti")
-    .createSignedUrl(doc.storage_path, 60 * 10); // link valido 10 minuti
-  if (error) { alert("Errore nell'aprire il documento: " + error.message); return; }
-  window.open(data.signedUrl, "_blank");
+function apriDocumento(doc) {
+  // Il cookie di sessione protegge anche il download del PDF
+  window.open(`/api/documenti/${doc.id}/file`, "_blank");
 }
 
 async function eliminaDocumento(doc) {
   if (!confirm(`Eliminare "${doc.nome_file}"?`)) return;
-  await sb.storage.from("documenti").remove([doc.storage_path]);
-  const { error } = await sb.from("documenti").delete().eq("id", doc.id);
-  if (error) { alert("Errore nell'eliminazione: " + error.message); return; }
+  try { await api("DELETE", `/api/documenti/${doc.id}`); } catch (ex) {
+    alert("Errore nell'eliminazione: " + ex.message); return;
+  }
   await caricaDocumenti();
 }
 
@@ -291,9 +288,9 @@ $("btn-analizza").addEventListener("click", async () => {
   err.hidden = true;
 
   // Controllo rapido: servono documenti
-  const { data: docs } = await sb.from("documenti").select("id, tipo")
-    .eq("progetto_id", progettoCorrente.id);
-  if (!docs || docs.length === 0) {
+  let docs = [];
+  try { docs = await api("GET", `/api/progetti/${progettoCorrente.id}/documenti`); } catch (_) { /* lo segnala il server */ }
+  if (docs.length === 0) {
     err.textContent = "Carica almeno un documento prima di avviare l'analisi.";
     err.hidden = false;
     return;
@@ -307,49 +304,64 @@ $("btn-analizza").addEventListener("click", async () => {
     if (!continua) return;
   }
 
-  $("btn-analizza").disabled = true;
-  $("analisi-loading").hidden = false;
-  $("analisi-risultato").hidden = true;
-
   try {
-    const { data, error } = await sb.functions.invoke("analizza", {
-      body: { progetto_id: progettoCorrente.id },
-    });
-    if (error) throw new Error(await estraiErroreFunzione(error));
-    if (data.errore) throw new Error(data.errore);
-
-    mostraAnalisi(data.analisi, data.creata_il || new Date().toISOString());
+    await api("POST", `/api/progetti/${progettoCorrente.id}/analisi`);
   } catch (ex) {
-    err.textContent = "Errore durante l'analisi: " + (ex.message || ex);
+    err.textContent = "Errore durante l'analisi: " + ex.message;
     err.hidden = false;
-  } finally {
-    $("btn-analizza").disabled = false;
-    $("analisi-loading").hidden = true;
+    return;
   }
+  $("analisi-risultato").hidden = true;
+  await controllaAnalisi(true);
 });
 
-async function estraiErroreFunzione(error) {
-  // supabase-js incapsula la risposta HTTP della funzione nell'oggetto context
+// L'analisi gira sul server in background: qui se ne controlla lo stato
+// ogni 5 secondi e, quando finisce, si mostra il risultato.
+let analisiInAttesa = false;
+let ultimaAnalisiMostrata = null;
+
+async function controllaAnalisi(appenaAvviata = false) {
+  fermaControlloAnalisi();
+  if (!progettoCorrente) return;
+  const progettoId = progettoCorrente.id;
+  if (appenaAvviata) analisiInAttesa = true;
+
+  let stato;
   try {
-    if (error.context && typeof error.context.json === "function") {
-      const corpo = await error.context.json();
-      if (corpo.errore) return corpo.errore;
-    }
-  } catch (_) { /* ignora */ }
-  return error.message || "Errore sconosciuto";
+    stato = await api("GET", `/api/progetti/${progettoId}/analisi`);
+  } catch (ex) {
+    // Errore di rete temporaneo durante l'attesa: riprova
+    if (analisiInAttesa) timerAnalisi = setTimeout(controllaAnalisi, 10000);
+    return;
+  }
+  if (!progettoCorrente || progettoCorrente.id !== progettoId) return; // l'utente ha cambiato pagina
+
+  $("btn-analizza").disabled = stato.in_corso;
+  $("analisi-loading").hidden = !stato.in_corso;
+
+  if (stato.in_corso) {
+    analisiInAttesa = true;
+    timerAnalisi = setTimeout(controllaAnalisi, 5000);
+    return;
+  }
+
+  if (analisiInAttesa && stato.errore) {
+    $("analisi-error").textContent = "Errore durante l'analisi: " + stato.errore;
+    $("analisi-error").hidden = false;
+  }
+  analisiInAttesa = false;
+
+  if (stato.ultima && stato.ultima.creata_il !== ultimaAnalisiMostrata) {
+    mostraAnalisi(stato.ultima.risultato, stato.ultima.creata_il);
+    ultimaAnalisiMostrata = stato.ultima.creata_il;
+  } else if (stato.ultima) {
+    $("analisi-risultato").hidden = false;
+  }
 }
 
-async function caricaUltimaAnalisi() {
-  const { data } = await sb
-    .from("analisi")
-    .select("*")
-    .eq("progetto_id", progettoCorrente.id)
-    .order("creata_il", { ascending: false })
-    .limit(1);
-
-  if (data && data.length > 0) {
-    mostraAnalisi(data[0].risultato, data[0].creata_il);
-  }
+function fermaControlloAnalisi() {
+  clearTimeout(timerAnalisi);
+  timerAnalisi = null;
 }
 
 // ─────────────────────────────────────────────

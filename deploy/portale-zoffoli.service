@@ -1,0 +1,28 @@
+[Unit]
+Description=Portale Zoffoli
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=portale
+Group=portale
+WorkingDirectory=/opt/portale-zoffoli/server
+# La configurazione viene letta da /opt/portale-zoffoli/server/.env
+ExecStart=/usr/bin/node server.js
+Environment=NODE_ENV=production
+Environment=HOME=/var/lib/portale-zoffoli
+Restart=on-failure
+RestartSec=5
+
+# Protezioni: il servizio può scrivere solo nella sua cartella dati
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/portale-zoffoli
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -6,116 +6,147 @@ in linguaggio semplice, con consiglio sull'offerta migliore e piano manutenzioni
 
 ## Architettura
 
-| Componente | Dove gira | Costo |
+Tutto gira su una VM Debian 13 aziendale (`192.168.3.220`); i documenti non lasciano
+l'azienda, tranne quando vengono inviati a Claude per l'analisi.
+
+| Componente | Tecnologia | Dove |
 |---|---|---|
-| Frontend (questa cartella) | GitHub Pages | Gratis |
-| Login, database, archivio PDF | Supabase (cloud, migrabile su server aziendale) | Gratis (piano Free) |
-| Analisi AI | Edge Function Supabase → API Claude (`claude-opus-5`) | ~0,30–0,60 € per analisi |
+| Frontend | HTML/CSS/JS statici | `public/`, servito dal backend |
+| Backend e API | Node.js + Express | `server/`, servizio systemd `portale-zoffoli` |
+| Database | SQLite (un solo file) | `/var/lib/portale-zoffoli/data/portale.db` |
+| Archivio PDF | cartella su disco | `/var/lib/portale-zoffoli/data/documenti/` |
+| Analisi AI | CLI di Claude Code (`claude -p`) | utente di servizio `portale` |
+| Porta | **3000** (8080 e 8085 sono già occupate) | `http://192.168.3.220:3000` |
 
-La chiave API di Claude sta **solo** sul server (Edge Function), mai nel browser.
-In caso di blocco di sicurezza del modello è attivo il **fallback automatico**
-su un modello alternativo (parametro `fallbacks` dell'API Anthropic), così
-l'analisi non si interrompe.
+**Login**: una password aziendale unica per tutti gli operatori. Sul server ne viene
+salvato solo l'hash (file `server/.env`).
 
----
+**Claude**: il backend copia i PDF del progetto in una cartella temporanea e lancia
+Claude Code in modalità non interattiva. Può usare solo lo strumento di lettura file
+e deve rispondere secondo lo schema JSON che il frontend sa visualizzare.
+L'analisi gira in background: si può chiudere la pagina e tornare più tardi.
 
-## Installazione — passo per passo
+### Autenticazione verso Claude: test e produzione
 
-### 1. Crea il progetto Supabase (≈ 5 minuti)
+| Fase | Cosa mettere in `server/.env` |
+|---|---|
+| **Test** (uso personale) | `CLAUDE_CODE_OAUTH_TOKEN=` → token del proprio account Claude Pro/Max |
+| **Produzione** (licenza acquistata) | `ANTHROPIC_API_KEY=sk-ant-...` e svuotare `CLAUDE_CODE_OAUTH_TOKEN` |
 
-1. Vai su **[supabase.com](https://supabase.com)** → **Start your project** → accedi con GitHub o Google.
-2. **New project**:
-   - *Name*: `portale-zoffoli`
-   - *Database password*: generane una e **salvala** (serve solo per amministrazione)
-   - *Region*: **Central EU (Frankfurt)** — dati in Europa (GDPR)
-3. Attendi ~2 minuti che il progetto sia pronto.
+Il codice non cambia: basta modificare `.env` e riavviare il servizio.
 
-### 2. Crea il database
-
-1. Nel menu a sinistra apri **SQL Editor** → **New query**.
-2. Copia tutto il contenuto di [`supabase/schema.sql`](supabase/schema.sql), incollalo e premi **Run**.
-   Crea le tabelle (progetti, documenti, analisi), le regole di sicurezza e l'archivio PDF privato.
-
-### 3. Crea l'utente aziendale
-
-1. Menu **Authentication** → **Users** → **Add user** → **Create new user**.
-2. Email: `operatori@portale-zoffoli.it` (o quella che preferisci — va scritta anche in `js/config.js`).
-3. Password: la **password aziendale** che tutti gli operatori useranno per entrare.
-4. Spunta **Auto Confirm User** e salva.
-
-> Consiglio: disattiva le registrazioni libere in **Authentication → Sign In / Up →
-> disabilita "Allow new users to sign up"**, così nessun estraneo può crearsi un account.
-
-### 4. Collega l'app a Supabase
-
-1. Nel dashboard: **Project Settings → API**.
-2. Apri il file **`js/config.js`** di questa cartella e compila:
-   - `SUPABASE_URL` → il campo **Project URL**
-   - `SUPABASE_ANON_KEY` → la chiave **anon / public**
-   - `LOGIN_EMAIL` → l'email dell'utente creato al passo 3
-
-### 5. Crea la chiave API Claude (a carico dell'azienda)
-
-1. Vai su **[console.anthropic.com](https://console.anthropic.com)** → crea l'account aziendale.
-2. **Billing** → carica un credito iniziale (es. 20 €) — *consiglio: NON attivare l'auto-ricarica, così la spesa è sempre sotto controllo*.
-3. **API Keys** → **Create key** → copia la chiave `sk-ant-...`.
-
-### 6. Pubblica la funzione di analisi
-
-Serve [Node.js](https://nodejs.org) installato. Da terminale, dentro questa cartella:
-
-```bash
-# Accedi a Supabase (apre il browser)
-npx supabase login
-
-# Collega la cartella al tuo progetto (il "project ref" è in Project Settings → General)
-npx supabase link --project-ref IL-TUO-PROJECT-REF
-
-# Salva la chiave Claude sul server (MAI nel codice!)
-npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-LA-TUA-CHIAVE
-
-# Pubblica la funzione
-npx supabase functions deploy analizza
-```
-
-### 7. Prova in locale
-
-```bash
-# Sempre dentro questa cartella:
-npx serve .
-```
-
-Apri l'indirizzo mostrato (di solito `http://localhost:3000`), entra con la password
-aziendale, crea un progetto, carica un PDF e premi **Analizza**.
-
-### 8. Pubblica su GitHub Pages
-
-1. Crea un repository su GitHub (es. `portale-zoffoli`).
-2. Carica questa cartella (da terminale: `git init`, `git add .`, `git commit -m "Prima versione"`, poi segui le istruzioni di GitHub per il push).
-3. Nel repository: **Settings → Pages → Source: Deploy from a branch → Branch: main / root** → Save.
-4. Dopo ~1 minuto l'app è online su `https://TUO-UTENTE.github.io/portale-zoffoli/`.
-
-> Il repository può restare pubblico senza rischi: contiene solo il codice.
-> I documenti, la password e la chiave API **non sono mai** nel repository.
+> ⚠️ Il token di un account Claude personale va usato **solo per i test e solo dal titolare
+> dell'account**. I termini d'uso Anthropic non consentono di usare un abbonamento personale
+> per un servizio aperto ad altri colleghi. Prima di aprire il portale agli operatori
+> va attivata la licenza aziendale (chiave API).
 
 ---
 
-## Migrazione futura sul server aziendale
+## Installazione sulla VM — passo per passo
 
-Supabase è open source e si installa on-premise con Docker
-([docs](https://supabase.com/docs/guides/self-hosting)). Quando l'azienda vorrà
-ospitare tutto internamente:
+Tutti i comandi vanno eseguiti sulla VM, collegati in SSH con un utente che può usare `sudo`.
 
-1. Installare Supabase sul server aziendale (Docker Compose).
-2. Rieseguire `supabase/schema.sql` e ricreare l'utente.
-3. Esportare/importare i dati (Postgres `pg_dump`) e i file dello Storage.
-4. Cambiare **due righe** in `js/config.js` (URL e anon key). Fine.
+### 1. Scarica il progetto
+
+```bash
+sudo apt-get install -y git
+sudo git clone https://github.com/CamPier/portale-zoffoli.git /opt/portale-zoffoli
+```
+
+> Se il repository è privato, `git clone` chiederà le credenziali GitHub (usa un
+> *personal access token* come password). In alternativa copia la cartella dal PC con
+> `scp -r portale-zoffoli utente@192.168.3.220:/tmp/` e poi `sudo mv /tmp/portale-zoffoli /opt/`.
+
+### 2. Lancia l'installazione
+
+```bash
+sudo bash /opt/portale-zoffoli/deploy/install.sh
+```
+
+Lo script (si può rieseguire senza perdere dati):
+- installa Node.js, sqlite3 e gli strumenti di compilazione dai repository Debian;
+- crea l'utente di servizio `portale` (senza login) e la cartella dati;
+- installa le dipendenze del portale e Claude Code;
+- crea `server/.env` da `server/.env.example`;
+- installa e avvia il servizio `portale-zoffoli`.
+
+### 3. Imposta la password aziendale
+
+```bash
+cd /opt/portale-zoffoli/server
+sudo -u portale node imposta-password.js
+```
+
+### 4. Collega il tuo account Claude (fase di test)
+
+```bash
+sudo -u portale -H /var/lib/portale-zoffoli/.local/bin/claude setup-token
+```
+
+Il comando mostra un link: aprilo nel browser del PC, accedi con il tuo account Claude
+e autorizza. Copia il token che compare (`sk-ant-oat01-...`) e incollalo in `.env`:
+
+```bash
+sudo nano /opt/portale-zoffoli/server/.env
+#   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
+
+### 5. Riavvia e prova
+
+```bash
+sudo systemctl restart portale-zoffoli
+sudo systemctl status portale-zoffoli
+```
+
+Dal PC apri **http://192.168.3.220:3000**, entra con la password, crea un progetto,
+carica un PDF e premi **Analizza**.
+
+---
+
+## Gestione quotidiana
+
+| Cosa | Comando |
+|---|---|
+| Vedere i log (anche delle analisi) | `sudo journalctl -u portale-zoffoli -f` |
+| Riavviare | `sudo systemctl restart portale-zoffoli` |
+| Aggiornare all'ultima versione su GitHub | `sudo bash /opt/portale-zoffoli/deploy/aggiorna.sh` |
+| Cambiare la password aziendale | passo 3, poi riavvio |
+| Backup manuale | `sudo bash /opt/portale-zoffoli/deploy/backup.sh` |
+
+**Backup automatico**: con `sudo crontab -e` aggiungi la riga
+
+```
+30 2 * * * bash /opt/portale-zoffoli/deploy/backup.sh /root/backup-portale
+```
+
+per un backup ogni notte alle 2:30 (vengono tenuti gli ultimi 30). Meglio ancora se
+la cartella di destinazione è una condivisione di rete o un disco diverso dalla VM.
+
+### Passare alla licenza (chiave API)
+
+1. In `server/.env`: compila `ANTHROPIC_API_KEY=sk-ant-...` e svuota `CLAUDE_CODE_OAUTH_TOKEN=`.
+2. `sudo systemctl restart portale-zoffoli`.
+
+## Sviluppo in locale
+
+Serve Node.js ≥ 20.12 e Claude Code installato (`claude` nel PATH).
+
+```bash
+cd server
+npm install
+cp .env.example .env      # poi imposta DATA_DIR=./data e CLAUDE_BIN=claude
+npm run password
+npm start                 # http://localhost:3000
+```
 
 ## Limiti da conoscere
 
-- Solo file **PDF**, max 20 MB l'uno e ~25 MB totali per analisi.
-- L'analisi richiede 1–3 minuti: non chiudere la pagina.
+- Solo file **PDF**, max 20 MB l'uno.
+- Un'analisi richiede qualche minuto (massimo `ANALISI_TIMEOUT_MIN`, di default 15).
+- Se il servizio viene riavviato durante un'analisi, l'analisi si interrompe: va rilanciata.
+- Con il token personale valgono i limiti d'uso del proprio abbonamento Claude, condivisi
+  con l'uso personale di Claude.
 - L'AI indica sempre le **fonti** (documento e pagina): per le decisioni importanti
   verifica i numeri sui documenti originali.
-- Piano Free di Supabase: 500 MB di database, 1 GB di storage — ampiamente
-  sufficienti per iniziare; si può passare al piano Pro o al server aziendale in seguito.
+- Il portale è in HTTP sulla rete interna. Se un giorno dovrà essere raggiungibile
+  dall'esterno, va messo dietro un reverse proxy con HTTPS (e `COOKIE_SECURE=1`).

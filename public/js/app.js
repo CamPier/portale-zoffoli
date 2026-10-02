@@ -173,6 +173,7 @@ async function apriProgetto(p) {
   $("analisi-error").hidden = true;
   $("analisi-risultato").hidden = true;
   $("analisi-risultato").innerHTML = "";
+  $("export-azioni").hidden = true;
   ultimaAnalisiMostrata = null;
   analisiInAttesa = false;
   mostraVista("view-progetto");
@@ -338,6 +339,7 @@ async function controllaAnalisi(appenaAvviata = false) {
 
   $("btn-analizza").disabled = stato.in_corso;
   $("analisi-loading").hidden = !stato.in_corso;
+  $("export-azioni").hidden = !stato.ultima || stato.in_corso;
 
   if (stato.in_corso) {
     analisiInAttesa = true;
@@ -363,6 +365,39 @@ function fermaControlloAnalisi() {
   clearTimeout(timerAnalisi);
   timerAnalisi = null;
 }
+
+// ─────────────────────────────────────────────
+//  Rapporto per la direzione
+// ─────────────────────────────────────────────
+$("btn-export-pdf").addEventListener("click", () => {
+  window.open(`rapporto.html?id=${progettoCorrente.id}`, "_blank");
+});
+
+$("btn-export-word").addEventListener("click", async () => {
+  const btn = $("btn-export-word");
+  btn.disabled = true;
+  btn.textContent = "Preparazione…";
+  try {
+    const r = await fetch(`/api/progetti/${progettoCorrente.id}/rapporto-word`);
+    if (!r.ok) {
+      const corpo = await r.json().catch(() => ({}));
+      throw new Error(corpo.errore || `Errore del server (${r.status})`);
+    }
+    const blob = await r.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Valutazione - ${progettoCorrente.nome}.docx`.replace(/[\\/:*?"<>|]/g, "_");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  } catch (ex) {
+    alert("Impossibile creare il documento Word: " + ex.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📝 Esporta Word";
+  }
+});
 
 // ─────────────────────────────────────────────
 //  Visualizzazione risultato analisi

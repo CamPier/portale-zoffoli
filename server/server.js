@@ -19,6 +19,7 @@ const { default: multer } = await import("multer");
 const { db, DOCUMENTI_DIR } = await import("./db.js");
 const { avviaAnalisi, statoAnalisi } = await import("./analisi.js");
 const { verificaPassword } = await import("./password.js");
+const { creaRapportoWord } = await import("./rapporto-word.js");
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -224,6 +225,37 @@ app.get("/api/progetti/:id/analisi", (req, res) => {
     ...statoAnalisi(req.params.id),
     ultima: ultima ? { risultato: JSON.parse(ultima.risultato), creata_il: ultima.creata_il } : null,
   });
+});
+
+// ─────────────────────────────────────────────
+//  Rapporto per la direzione (PDF dal browser, Word dal server)
+// ─────────────────────────────────────────────
+function datiRapporto(progettoId) {
+  const progetto = db.prepare("select * from progetti where id = ?").get(progettoId);
+  if (!progetto) return null;
+  const documenti = db.prepare("select nome_file, tipo, fornitore from documenti where progetto_id = ? order by tipo desc, caricato_il")
+    .all(progettoId);
+  const ultima = db.prepare("select * from analisi where progetto_id = ? order by creata_il desc limit 1").get(progettoId);
+  const analisi = ultima ? { risultato: JSON.parse(ultima.risultato), creata_il: ultima.creata_il } : null;
+  return { progetto, documenti, analisi };
+}
+
+app.get("/api/progetti/:id/rapporto", (req, res) => {
+  const dati = datiRapporto(req.params.id);
+  if (!dati) return res.status(404).json({ errore: "Progetto non trovato." });
+  if (!dati.analisi) return res.status(400).json({ errore: "Questo progetto non ha ancora un'analisi." });
+  res.json(dati);
+});
+
+app.get("/api/progetti/:id/rapporto-word", async (req, res) => {
+  const dati = datiRapporto(req.params.id);
+  if (!dati) return res.status(404).json({ errore: "Progetto non trovato." });
+  if (!dati.analisi) return res.status(400).json({ errore: "Questo progetto non ha ancora un'analisi." });
+  const buffer = await creaRapportoWord(dati);
+  const nome = `Valutazione - ${dati.progetto.nome}.docx`.replace(/[\\/:*?"<>|]/g, "_");
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  res.setHeader("Content-Disposition", `attachment; filename="rapporto.docx"; filename*=UTF-8''${encodeURIComponent(nome)}`);
+  res.send(buffer);
 });
 
 // ─────────────────────────────────────────────

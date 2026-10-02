@@ -1,0 +1,107 @@
+/* ═══════════ Portale Zoffoli — rapporto stampabile (A4) ═══════════ */
+
+:root {
+  --blu: #1d4e89;
+  --testo: #1e2733;
+  --muto: #64748b;
+  --bordo: #e2e8f0;
+  --verde: #16a34a;  --verde-bg: #ecfdf3;
+  --giallo: #d97706; --giallo-bg: #fffbeb;
+  --rosso: #dc2626;  --rosso-bg: #fef2f2;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: Calibri, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  color: var(--testo);
+  background: #e9edf3;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── Barra comandi (solo a schermo) ── */
+.barra {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--blu); color: #fff; padding: 10px 20px;
+}
+.btn {
+  font: inherit; font-weight: 700; cursor: pointer;
+  background: #fff; color: var(--blu); border: 0; border-radius: 8px; padding: 8px 16px;
+}
+.btn:disabled { opacity: .5; cursor: default; }
+.suggerimento {
+  max-width: 210mm; margin: 12px auto 0; padding: 10px 14px; font-size: 9.5pt;
+  background: var(--giallo-bg); border: 1px solid var(--giallo); border-radius: 8px;
+}
+
+/* ── Foglio A4 a schermo ── */
+#rapporto {
+  max-width: 210mm; margin: 16px auto 40px; background: #fff;
+  padding: 18mm; box-shadow: 0 2px 12px rgba(0, 0, 0, .12);
+}
+
+/* ── Copertina ── */
+.copertina {
+  min-height: 245mm; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; break-after: page;
+}
+.copertina img { width: 75mm; margin-bottom: 22mm; }
+.copertina .eyebrow { font-size: 11pt; font-weight: 700; letter-spacing: .12em; color: var(--muto); }
+.copertina h1 { font-size: 26pt; color: var(--blu); margin: 6mm 0 4mm; line-height: 1.15; }
+.copertina .descr { font-size: 13pt; }
+.copertina .date { margin-top: 30mm; color: var(--muto); }
+
+/* ── Sezioni ── */
+h2 {
+  font-size: 15pt; color: var(--blu); margin: 9mm 0 3mm; padding-bottom: 1.5mm;
+  border-bottom: 1px solid var(--bordo); break-after: avoid;
+}
+h3 { font-size: 12pt; margin: 5mm 0 1.5mm; break-after: avoid; }
+p { margin-bottom: 2.5mm; }
+ul { margin: 0 0 2.5mm 6mm; }
+li { margin-bottom: 1mm; }
+.etichetta { font-size: 8.5pt; font-weight: 700; color: var(--muto); text-transform: uppercase; letter-spacing: .05em; margin-top: 3mm; }
+.nota { font-size: 8.5pt; color: var(--muto); font-style: italic; }
+
+.consigliato {
+  border: 2px solid var(--blu); border-radius: 3mm; padding: 5mm 6mm; margin-top: 2mm; break-inside: avoid;
+}
+.consigliato .nome { font-size: 17pt; font-weight: 800; color: var(--blu); margin-bottom: 2mm; }
+
+.offerta { break-inside: avoid; margin-bottom: 4mm; }
+.offerta h3 .prezzo { font-weight: 400; }
+.pallino { font-weight: 700; }
+.pallino.verde { color: var(--verde); }
+.pallino.giallo { color: var(--giallo); }
+.pallino.rosso { color: var(--rosso); }
+
+/* ── Tabelle ── */
+table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 2mm 0 2mm; }
+th { background: var(--blu); color: #fff; text-align: left; padding: 2mm 2.5mm; }
+td { border-bottom: 1px solid var(--bordo); padding: 2mm 2.5mm; vertical-align: top; }
+tr { break-inside: avoid; }
+thead { display: table-header-group; }
+td small { display: block; color: var(--muto); font-size: 8pt; }
+td.verde { background: var(--verde-bg); }
+td.giallo { background: var(--giallo-bg); }
+td.rosso { background: var(--rosso-bg); }
+
+.attenzione { break-inside: avoid; margin-bottom: 3mm; }
+.gravita { font-size: 8pt; font-weight: 700; padding: .3mm 1.5mm; border-radius: 1mm; background: #f1f5f9; color: var(--muto); }
+.gravita.alta { background: var(--rosso-bg); color: var(--rosso); }
+
+.errore { color: var(--rosso); font-weight: 700; }
+
+/* ── Stampa ── */
+@page { size: A4; margin: 16mm 16mm 18mm; }
+
+@media print {
+  body { background: #fff; }
+  .barra, .suggerimento { display: none !important; }
+  #rapporto { max-width: none; margin: 0; padding: 0; box-shadow: none; }
+  .copertina { min-height: 250mm; }
+}

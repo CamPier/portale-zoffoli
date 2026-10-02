@@ -26,6 +26,11 @@ Claude Code in modalità non interattiva. Può usare solo lo strumento di lettur
 e deve rispondere secondo lo schema JSON che il frontend sa visualizzare.
 L'analisi gira in background: si può chiudere la pagina e tornare più tardi.
 
+**Rapporto per la direzione**: dentro ogni progetto con un'analisi ci sono due pulsanti:
+- **Esporta PDF** apre una pagina impaginata A4 (copertina con logo, consiglio, offerte,
+  confronto, manutenzioni, punti di attenzione) da salvare con *Stampa → Salva come PDF*;
+- **Esporta Word** scarica lo stesso rapporto in `.docx`, modificabile prima dell'invio.
+
 ### Autenticazione verso Claude: test e produzione
 
 | Fase | Cosa mettere in `server/.env` |

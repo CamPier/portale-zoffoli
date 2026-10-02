@@ -272,3 +272,9 @@ table.comparativa, table.manutenzione {
 
 /* ── Footer ── */
 .footer { text-align: center; padding: 18px; color: var(--testo-muto); font-size: .8rem; }
+
+/* ═══════════ Esportazione rapporto ═══════════ */
+.export-azioni { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--bordo); }
+.export-titolo { font-size: .85rem; font-weight: 700; color: var(--testo-muto); margin-bottom: 8px; }
+.export-pulsanti { display: flex; gap: 10px; flex-wrap: wrap; }
+.export-pulsanti .btn { flex: 1; min-width: 140px; }

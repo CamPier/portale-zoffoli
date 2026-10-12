@@ -26,6 +26,11 @@ Claude Code in modalità non interattiva. Può usare solo lo strumento di lettur
 e deve rispondere secondo lo schema JSON che il frontend sa visualizzare.
 L'analisi gira in background: si può chiudere la pagina e tornare più tardi.
 
+**Domande**: in fondo a ogni progetto c'è la sezione *Fai una domanda*. Claude risponde
+partendo dall'analisi già fatta e rilegge i PDF solo quando serve un dettaglio,
+indicando sempre documento e pagina. La conversazione resta salvata nel progetto
+(le ultime 8 domande e risposte vengono usate come contesto per le successive).
+
 **Rapporto per la direzione**: dentro ogni progetto con un'analisi ci sono due pulsanti:
 - **Esporta PDF** apre una pagina impaginata A4 (copertina con logo, consiglio, offerte,
   confronto, manutenzioni, punti di attenzione) da salvare con *Stampa → Salva come PDF*;

@@ -1,26 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
 //  Analisi AI — Portale Zoffoli
 //
-//  Copia i PDF del progetto in una cartella temporanea e li fa
-//  leggere a Claude tramite la CLI di Claude Code in modalità
-//  non interattiva (`claude -p`). Il risultato JSON viene salvato
-//  nella tabella "analisi".
-//
-//  Autenticazione (nel file .env, mai nel codice):
-//    - fase di test:  CLAUDE_CODE_OAUTH_TOKEN=...   (da `claude setup-token`)
-//    - con licenza:   ANTHROPIC_API_KEY=sk-ant-...  (sostituisce il token)
-//  Il codice non cambia: la CLI usa ciò che trova nell'ambiente.
+//  Fa leggere a Claude tutti i PDF del progetto (vedi claude.js) e
+//  salva il rapporto JSON nella tabella "analisi".
 // ═══════════════════════════════════════════════════════════════
 
-import { spawn } from "node:child_process";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { db, DOCUMENTI_DIR } from "./db.js";
+import { db } from "./db.js";
+import { eseguiClaude, preparaCartella, rimuoviCartella } from "./claude.js";
 
-const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "opus";
 const TIMEOUT_MS = Number(process.env.ANALISI_TIMEOUT_MIN || 15) * 60 * 1000;
 
 // Schema JSON del risultato: garantisce una risposta sempre uguale
@@ -146,12 +134,6 @@ Regole di analisi:
 
 Leggi i PDF con lo strumento Read, TUTTE le pagine di ogni documento. Non usare altri strumenti.`;
 
-const ETICHETTE = {
-  scheda_tecnica: "SCHEDA TECNICA",
-  preventivo: "PREVENTIVO",
-  altro: "DOCUMENTO",
-};
-
 // Analisi in corso, per progetto: { in_corso, errore, avviata_il }
 // (in memoria: un riavvio del servizio interrompe le analisi in corso)
 const lavori = new Map();
@@ -174,127 +156,38 @@ export function avviaAnalisi(progettoId) {
 }
 
 async function eseguiAnalisi(progettoId) {
-  // 1. Elenco documenti (schede tecniche prima dei preventivi)
-  const documenti = db
-    .prepare("select * from documenti where progetto_id = ? order by tipo desc, caricato_il")
-    .all(progettoId);
-  if (documenti.length === 0) throw new Error("Nessun documento trovato per questo progetto.");
-
-  // 2. Copia i PDF in una cartella di lavoro temporanea con nomi semplici
-  const cartella = await fs.mkdtemp(path.join(os.tmpdir(), "analisi-"));
+  const { cartella, documenti, elenco } = await preparaCartella(progettoId, "analisi-");
   try {
-    const righe = [];
-    for (let i = 0; i < documenti.length; i++) {
-      const doc = documenti[i];
-      const nome = `documento-${String(i + 1).padStart(2, "0")}.pdf`;
-      try {
-        await fs.copyFile(path.join(DOCUMENTI_DIR, doc.storage_path), path.join(cartella, nome));
-      } catch {
-        throw new Error(`Impossibile leggere il file "${doc.nome_file}".`);
-      }
-      const etichetta = ETICHETTE[doc.tipo] ?? "DOCUMENTO";
-      const fornitore = doc.fornitore ? ` — Fornitore: ${doc.fornitore}` : "";
-      righe.push(`- ${nome}: ${etichetta}${fornitore} — Nome file originale: ${doc.nome_file}`);
-    }
-
     const istruzioni =
-      `Nella cartella corrente ci sono ${documenti.length} documenti PDF:\n${righe.join("\n")}\n\n` +
+      `Nella cartella corrente ci sono ${documenti.length} documenti PDF:\n${elenco}\n\n` +
       "Leggi tutti i documenti qui sopra e produci il rapporto completo secondo lo schema richiesto. " +
       "Nei riferimenti usa il nome del fornitore o il nome file originale, non 'documento-01'. " +
       "Ricorda: il lettore non è un tecnico.";
 
-    // 3. Chiama Claude
-    const analisi = await chiamaClaude(istruzioni, cartella);
+    const esito = await eseguiClaude({
+      istruzioni,
+      cartella,
+      sistema: PROMPT_SISTEMA,
+      schema: SCHEMA_ANALISI,
+      maxTurni: 60,
+      timeoutMs: TIMEOUT_MS,
+      cosa: "L'analisi",
+    });
 
-    // 4. Salva il risultato
+    // Con --json-schema il risultato validato arriva in "structured_output";
+    // in mancanza, prova a interpretare il testo della risposta.
+    let analisi = esito.structured_output;
+    if (!analisi || typeof analisi !== "object") {
+      try {
+        analisi = JSON.parse(String(esito.result || "").replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch {
+        throw new Error("Claude ha risposto in un formato inatteso. Riprova.");
+      }
+    }
+
     db.prepare("insert into analisi (id, progetto_id, risultato, creata_il) values (?, ?, ?, ?)")
       .run(crypto.randomUUID(), progettoId, JSON.stringify(analisi), new Date().toISOString());
   } finally {
-    await fs.rm(cartella, { recursive: true, force: true });
+    await rimuoviCartella(cartella);
   }
-}
-
-function chiamaClaude(istruzioni, cartella) {
-  const args = [
-    "-p",
-    "--output-format", "json",
-    "--model", CLAUDE_MODEL,
-    "--json-schema", JSON.stringify(SCHEMA_ANALISI),
-    "--append-system-prompt", PROMPT_SISTEMA,
-    // Unico strumento disponibile: la lettura dei file della cartella di lavoro
-    "--tools", "Read",
-    "--allowedTools", "Read",
-    "--max-turns", "60",
-  ];
-
-  // Le righe vuote del .env (es. ANTHROPIC_API_KEY=) non vanno passate alla CLI
-  const env = { ...process.env };
-  for (const k of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (!env[k]) delete env[k];
-
-  return new Promise((resolve, reject) => {
-    const figlio = spawn(CLAUDE_BIN, args, {
-      cwd: cartella,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    figlio.stdout.on("data", (d) => (stdout += d));
-    figlio.stderr.on("data", (d) => (stderr += d));
-
-    const timer = setTimeout(() => {
-      figlio.kill("SIGTERM");
-      reject(new Error(`L'analisi ha superato ${TIMEOUT_MS / 60000} minuti ed è stata interrotta. Prova con meno documenti alla volta.`));
-    }, TIMEOUT_MS);
-
-    figlio.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new Error(
-        err.code === "ENOENT"
-          ? "Claude Code non è installato sul server (comando 'claude' non trovato)."
-          : "Impossibile avviare Claude Code: " + err.message,
-      ));
-    });
-
-    figlio.on("close", (codice) => {
-      clearTimeout(timer);
-
-      let esito;
-      try {
-        esito = JSON.parse(stdout);
-      } catch {
-        console.error("Output Claude non valido. stderr:", stderr, "stdout:", stdout.slice(0, 2000));
-        return reject(new Error(
-          "Risposta non valida da Claude Code" + (stderr ? ": " + stderr.trim().slice(0, 300) : ` (codice ${codice}).`),
-        ));
-      }
-
-      if (esito.is_error || esito.subtype !== "success") {
-        console.error("Claude ha restituito un errore:", esito);
-        if (esito.subtype === "error_max_turns") {
-          return reject(new Error("L'analisi è troppo lunga per essere completata. Prova con meno documenti alla volta."));
-        }
-        return reject(new Error("Claude non ha completato l'analisi: " + (esito.result || esito.subtype || "errore sconosciuto")));
-      }
-
-      if (esito.total_cost_usd !== undefined) {
-        console.log(`Analisi completata in ${Math.round((esito.duration_ms || 0) / 1000)} s (costo equivalente API: $${esito.total_cost_usd.toFixed(2)})`);
-      }
-
-      // Con --json-schema il risultato validato arriva in "structured_output";
-      // in mancanza, prova a interpretare il testo della risposta.
-      if (esito.structured_output && typeof esito.structured_output === "object") {
-        return resolve(esito.structured_output);
-      }
-      try {
-        const testo = String(esito.result || "").replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-        resolve(JSON.parse(testo));
-      } catch {
-        reject(new Error("Claude ha risposto in un formato inatteso. Riprova."));
-      }
-    });
-
-    figlio.stdin.end(istruzioni);
-  });
 }

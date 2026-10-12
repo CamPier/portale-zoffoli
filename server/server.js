@@ -20,6 +20,7 @@ const { db, DOCUMENTI_DIR } = await import("./db.js");
 const { avviaAnalisi, statoAnalisi } = await import("./analisi.js");
 const { verificaPassword } = await import("./password.js");
 const { creaRapportoWord } = await import("./rapporto-word.js");
+const { cancellaConversazione, domandaInCorso, elencoDomande, faiDomanda } = await import("./domande.js");
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -225,6 +226,35 @@ app.get("/api/progetti/:id/analisi", (req, res) => {
     ...statoAnalisi(req.params.id),
     ultima: ultima ? { risultato: JSON.parse(ultima.risultato), creata_il: ultima.creata_il } : null,
   });
+});
+
+// ─────────────────────────────────────────────
+//  Domande sui documenti e sull'analisi
+// ─────────────────────────────────────────────
+app.get("/api/progetti/:id/domande", (req, res) => {
+  res.json(elencoDomande(req.params.id));
+});
+
+app.post("/api/progetti/:id/domande", (req, res) => {
+  const progettoId = req.params.id;
+  const domanda = String(req.body?.domanda || "").trim();
+  if (!domanda) return res.status(400).json({ errore: "Scrivi una domanda." });
+  if (domanda.length > 2000) return res.status(400).json({ errore: "La domanda è troppo lunga (massimo 2000 caratteri)." });
+  if (!db.prepare("select 1 from progetti where id = ?").get(progettoId)) {
+    return res.status(404).json({ errore: "Progetto non trovato." });
+  }
+  if (!db.prepare("select 1 from documenti where progetto_id = ?").get(progettoId)) {
+    return res.status(400).json({ errore: "Carica almeno un documento prima di fare domande." });
+  }
+  if (domandaInCorso(progettoId)) {
+    return res.status(409).json({ errore: "Attendi la risposta alla domanda precedente." });
+  }
+  res.status(202).json(faiDomanda(progettoId, domanda));
+});
+
+app.delete("/api/progetti/:id/domande", (req, res) => {
+  cancellaConversazione(req.params.id);
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────

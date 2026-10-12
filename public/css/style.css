@@ -53,7 +53,7 @@ body {
 
 /* ── Layout ── */
 main#app { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
-.view[hidden] { display: none !important; }
+[hidden] { display: none !important; }
 .page-head {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
@@ -278,3 +278,30 @@ table.comparativa, table.manutenzione {
 .export-titolo { font-size: .85rem; font-weight: 700; color: var(--testo-muto); margin-bottom: 8px; }
 .export-pulsanti { display: flex; gap: 10px; flex-wrap: wrap; }
 .export-pulsanti .btn { flex: 1; min-width: 140px; }
+
+/* ═══════════ Domande sui documenti ═══════════ */
+.domande-card { margin-top: 22px; }
+.domande-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.domande-lista { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+.msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: .94rem; }
+.msg-domanda { align-self: flex-end; background: var(--blu); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.msg-risposta { align-self: flex-start; background: var(--sfondo); border: 1px solid var(--bordo); border-bottom-left-radius: 4px; }
+.msg-risposta p { margin-bottom: 8px; }
+.msg-risposta p:last-child, .msg-risposta ul:last-child, .msg-risposta ol:last-child { margin-bottom: 0; }
+.msg-risposta ul, .msg-risposta ol { padding-left: 20px; margin-bottom: 8px; }
+.msg-errore { align-self: flex-start; background: var(--rosso-bg); color: var(--rosso); border: 1px solid #fecaca; }
+.msg-attesa { align-self: flex-start; color: var(--testo-muto); font-style: italic; display: flex; align-items: center; gap: 10px; }
+.msg-attesa .spinner { width: 18px; height: 18px; border-width: 3px; margin: 0; }
+.msg-ora { display: block; font-size: .72rem; opacity: .7; margin-top: 4px; }
+.domande-esempi { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip {
+  font: inherit; font-size: .84rem; cursor: pointer; padding: 6px 12px; border-radius: 999px;
+  background: #eef2f8; color: var(--blu); border: 1px solid var(--bordo);
+}
+.chip:hover { background: #e0e8f4; }
+.domanda-form { display: flex; gap: 10px; align-items: flex-end; }
+.domanda-form textarea {
+  flex: 1; font: inherit; resize: vertical; min-height: 46px; padding: 10px 12px;
+  border: 1px solid var(--bordo); border-radius: 10px;
+}
+.domanda-form textarea:focus { outline: 2px solid var(--blu); outline-offset: -1px; }

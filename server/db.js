@@ -46,9 +46,26 @@ db.exec(`
     creata_il text not null
   );
 
+  -- ── Domande sui documenti e sull'analisi (conversazione per progetto) ──
+  create table if not exists domande (
+    id text primary key,
+    progetto_id text not null references progetti(id) on delete cascade,
+    domanda text not null,
+    risposta text,
+    errore text,
+    stato text not null check (stato in ('in_corso', 'completata', 'errore')),
+    creata_il text not null,
+    risposta_il text
+  );
+  create index if not exists domande_progetto on domande(progetto_id, creata_il);
+
   -- ── Sessioni di login (sopravvivono al riavvio del servizio) ──
   create table if not exists sessioni (
     token text primary key,
     scade_il integer not null
   );
 `);
+
+// Le domande rimaste "in corso" sono state interrotte da un riavvio del servizio
+db.prepare("update domande set stato = 'errore', errore = ? where stato = 'in_corso'")
+  .run("Risposta interrotta dal riavvio del server. Fai di nuovo la domanda.");

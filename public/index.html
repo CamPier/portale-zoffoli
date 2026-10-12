@@ -141,6 +141,34 @@
         </div>
 
       </div>
+
+      <!-- Domande sui documenti e sull'analisi -->
+      <div class="card domande-card">
+        <div class="domande-head">
+          <h2>💬 Fai una domanda</h2>
+          <button class="btn-mini" id="btn-cancella-domande" hidden>Cancella conversazione</button>
+        </div>
+        <p class="hint">
+          Chiedi qualsiasi cosa sui documenti caricati o sull'analisi: l'assistente risponde
+          con parole semplici e ti dice dove ha trovato l'informazione.
+        </p>
+
+        <div id="domande-lista" class="domande-lista"></div>
+
+        <div class="domande-esempi" id="domande-esempi">
+          <button type="button" class="chip">Quale offerta ha la garanzia più lunga?</button>
+          <button type="button" class="chip">Quanto spenderemo di manutenzione ogni anno?</button>
+          <button type="button" class="chip">Cosa è incluso in un preventivo e manca negli altri?</button>
+          <button type="button" class="chip">Quali sono i tempi di consegna?</button>
+        </div>
+
+        <form id="form-domanda" class="domanda-form">
+          <textarea id="domanda-testo" rows="2" maxlength="2000"
+            placeholder="Scrivi la tua domanda… (Invio per inviare, Maiusc+Invio per andare a capo)"></textarea>
+          <button type="submit" class="btn btn-primary" id="btn-domanda">Chiedi</button>
+        </form>
+        <p class="form-error" id="domanda-error" hidden></p>
+      </div>
     </section>
 
   </main>

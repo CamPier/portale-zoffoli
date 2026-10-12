@@ -5,6 +5,7 @@
 // Stato corrente
 let progettoCorrente = null;
 let timerAnalisi = null;
+let timerDomande = null;
 
 // Scorciatoia
 const $ = (id) => document.getElementById(id);
@@ -24,7 +25,7 @@ async function api(metodo, url, corpo) {
   try { dati = await risposta.json(); } catch (_) { /* risposta senza JSON */ }
 
   if (risposta.status === 401 && url !== "/api/login") {
-    fermaControlloAnalisi();
+    fermaControlli();
     mostraVista("view-login");
   }
   if (!risposta.ok) {
@@ -85,7 +86,7 @@ $("form-login").addEventListener("submit", async (e) => {
 });
 
 $("btn-logout").addEventListener("click", async () => {
-  fermaControlloAnalisi();
+  fermaControlli();
   try { await api("POST", "/api/logout"); } catch (_) { /* esce comunque */ }
   mostraVista("view-login");
 });
@@ -150,14 +151,14 @@ $("btn-elimina-progetto").addEventListener("click", async () => {
     alert("Errore nell'eliminazione: " + ex.message); return;
   }
 
-  fermaControlloAnalisi();
+  fermaControlli();
   progettoCorrente = null;
   await caricaProgetti();
   mostraVista("view-progetti");
 });
 
 $("btn-indietro").addEventListener("click", async () => {
-  fermaControlloAnalisi();
+  fermaControlli();
   progettoCorrente = null;
   await caricaProgetti();
   mostraVista("view-progetti");
@@ -174,11 +175,15 @@ async function apriProgetto(p) {
   $("analisi-risultato").hidden = true;
   $("analisi-risultato").innerHTML = "";
   $("export-azioni").hidden = true;
+  $("domande-lista").innerHTML = "";
+  $("domanda-error").hidden = true;
+  $("domanda-testo").value = "";
   ultimaAnalisiMostrata = null;
   analisiInAttesa = false;
+  firmaConversazione = "";
   mostraVista("view-progetto");
   await caricaDocumenti();
-  await controllaAnalisi();
+  await Promise.all([controllaAnalisi(), caricaDomande()]);
 }
 
 // ─────────────────────────────────────────────
@@ -322,7 +327,7 @@ let analisiInAttesa = false;
 let ultimaAnalisiMostrata = null;
 
 async function controllaAnalisi(appenaAvviata = false) {
-  fermaControlloAnalisi();
+  clearTimeout(timerAnalisi);
   if (!progettoCorrente) return;
   const progettoId = progettoCorrente.id;
   if (appenaAvviata) analisiInAttesa = true;
@@ -361,9 +366,151 @@ async function controllaAnalisi(appenaAvviata = false) {
   }
 }
 
-function fermaControlloAnalisi() {
+// Ferma i controlli periodici (analisi e domande) quando si lascia il progetto
+function fermaControlli() {
   clearTimeout(timerAnalisi);
+  clearTimeout(timerDomande);
   timerAnalisi = null;
+  timerDomande = null;
+}
+
+// ─────────────────────────────────────────────
+//  Domande sui documenti e sull'analisi
+// ─────────────────────────────────────────────
+// Le risposte arrivano dal server in background: finché c'è una
+// domanda in corso la conversazione viene ricaricata ogni 3 secondi.
+let firmaConversazione = "";
+
+async function caricaDomande() {
+  clearTimeout(timerDomande);
+  if (!progettoCorrente) return;
+  const progettoId = progettoCorrente.id;
+
+  let domande;
+  try {
+    domande = await api("GET", `/api/progetti/${progettoId}/domande`);
+  } catch (_) {
+    timerDomande = setTimeout(caricaDomande, 10000);
+    return;
+  }
+  if (!progettoCorrente || progettoCorrente.id !== progettoId) return;
+
+  const inCorso = domande.some((d) => d.stato === "in_corso");
+  $("btn-domanda").disabled = inCorso;
+  $("btn-cancella-domande").hidden = domande.length === 0 || inCorso;
+  $("domande-esempi").hidden = domande.length > 0;
+
+  // Ridisegna solo se qualcosa è cambiato (evita di perdere la posizione di lettura)
+  const firma = domande.map((d) => d.id + d.stato).join("|");
+  if (firma !== firmaConversazione) {
+    firmaConversazione = firma;
+    mostraDomande(domande);
+  }
+  if (inCorso) timerDomande = setTimeout(caricaDomande, 3000);
+}
+
+function mostraDomande(domande) {
+  const lista = $("domande-lista");
+  let html = "";
+  for (const d of domande) {
+    html += `<div class="msg msg-domanda">${escapeHtml(d.domanda)}<span class="msg-ora">${formattaOra(d.creata_il)}</span></div>`;
+    if (d.stato === "in_corso") {
+      html += `<div class="msg msg-attesa"><div class="spinner"></div>Sto cercando la risposta nei documenti…</div>`;
+    } else if (d.stato === "errore") {
+      html += `<div class="msg msg-errore">⚠️ ${escapeHtml(d.errore || "Errore sconosciuto")}</div>`;
+    } else {
+      html += `<div class="msg msg-risposta">${testoFormattato(d.risposta)}</div>`;
+    }
+  }
+  lista.innerHTML = html;
+  const ultimo = lista.lastElementChild;
+  if (ultimo) ultimo.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function inviaDomanda(testo) {
+  const err = $("domanda-error");
+  err.hidden = true;
+  testo = testo.trim();
+  if (!testo || !progettoCorrente) return;
+
+  $("btn-domanda").disabled = true;
+  try {
+    await api("POST", `/api/progetti/${progettoCorrente.id}/domande`, { domanda: testo });
+    $("domanda-testo").value = "";
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+    $("btn-domanda").disabled = false;
+    return;
+  }
+  await caricaDomande();
+}
+
+$("form-domanda").addEventListener("submit", (e) => {
+  e.preventDefault();
+  inviaDomanda($("domanda-testo").value);
+});
+
+// Invio = invia, Maiusc+Invio = a capo
+$("domanda-testo").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    if (!$("btn-domanda").disabled) inviaDomanda($("domanda-testo").value);
+  }
+});
+
+$("domande-esempi").addEventListener("click", (e) => {
+  if (e.target.classList.contains("chip")) {
+    $("domanda-testo").value = e.target.textContent;
+    $("domanda-testo").focus();
+  }
+});
+
+$("btn-cancella-domande").addEventListener("click", async () => {
+  if (!confirm("Cancellare tutta la conversazione di questo progetto?")) return;
+  try { await api("DELETE", `/api/progetti/${progettoCorrente.id}/domande`); } catch (ex) {
+    alert("Errore: " + ex.message); return;
+  }
+  await caricaDomande();
+});
+
+// Converte il testo della risposta (paragrafi, elenchi "- " / "1. ",
+// **grassetto**) in HTML. Il testo viene prima "escapato": niente HTML dall'esterno.
+function testoFormattato(testo) {
+  const righe = escapeHtml(testo || "").split(/\r?\n/);
+  const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/^#{1,6}\s+(.*)$/, "<strong>$1</strong>");
+  let html = "";
+  let elenco = null; // "ul" | "ol"
+  let paragrafo = [];
+
+  const chiudiParagrafo = () => {
+    if (paragrafo.length) html += `<p>${paragrafo.map(inline).join("<br>")}</p>`;
+    paragrafo = [];
+  };
+  const chiudiElenco = () => {
+    if (elenco) html += `</${elenco}>`;
+    elenco = null;
+  };
+
+  for (const riga of righe) {
+    const puntato = riga.match(/^\s*[-*•]\s+(.*)$/);
+    const numerato = riga.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (puntato || numerato) {
+      chiudiParagrafo();
+      const tipo = puntato ? "ul" : "ol";
+      if (elenco !== tipo) { chiudiElenco(); html += `<${tipo}>`; elenco = tipo; }
+      html += `<li>${inline((puntato || numerato)[1])}</li>`;
+    } else if (riga.trim() === "") {
+      chiudiParagrafo();
+      chiudiElenco();
+    } else {
+      chiudiElenco();
+      paragrafo.push(riga);
+    }
+  }
+  chiudiParagrafo();
+  chiudiElenco();
+  return html;
 }
 
 // ─────────────────────────────────────────────
@@ -551,6 +698,14 @@ function escapeHtml(testo) {
 
 function formattaData(iso) {
   return new Date(iso).toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function formattaOra(iso) {
+  const d = new Date(iso);
+  const oggi = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString("it-IT", oggi
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function formattaDataOra(iso) {

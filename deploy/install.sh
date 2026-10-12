@@ -18,9 +18,9 @@ if [[ ! -f "$APP_DIR/server/server.js" ]]; then
   echo "Progetto non trovato in $APP_DIR. Copialo lì e riprova."; exit 1
 fi
 
-echo "▶ 1/6  Pacchetti di sistema (Node.js dai repository Debian)"
+echo "▶ 1/6  Pacchetti di sistema (Node.js e Python con pandas dai repository Debian)"
 apt-get update -qq
-apt-get install -y -qq nodejs npm curl ca-certificates git sqlite3 build-essential python3 >/dev/null
+apt-get install -y -qq nodejs npm curl ca-certificates git sqlite3 build-essential python3 python3-pandas >/dev/null
 node -v
 
 echo "▶ 2/6  Utente di servizio '$UTENTE'"

@@ -21,6 +21,8 @@ const { avviaAnalisi, statoAnalisi } = await import("./analisi.js");
 const { verificaPassword } = await import("./password.js");
 const { creaRapportoWord } = await import("./rapporto-word.js");
 const { cancellaConversazione, domandaInCorso, elencoDomande, faiDomanda } = await import("./domande.js");
+const { avviaRendimento, statoRendimento } = await import("./rendimento.js");
+const { excelInCsv, formatoProduzione } = await import("./excel.js");
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -161,17 +163,34 @@ app.post("/api/progetti/:id/documenti", upload.single("file"), (req, res) => {
   }
   const file = req.file;
   if (!file) return res.status(400).json({ errore: "Nessun file ricevuto." });
-  if (file.buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
-    return res.status(400).json({ errore: "Puoi caricare solo file PDF." });
-  }
   const tipo = req.body.tipo;
-  if (!["scheda_tecnica", "preventivo", "altro"].includes(tipo)) {
+  if (!["scheda_tecnica", "preventivo", "altro", "produzione"].includes(tipo)) {
     return res.status(400).json({ errore: "Tipo documento non valido." });
   }
 
   // Il nome file arriva come campo di testo (UTF-8) per conservare accenti e simboli
-  const nomeFile = String(req.body.nome_file || file.originalname || "documento.pdf").slice(0, 255);
-  const storagePath = `${progettoId}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}.pdf`;
+  const nomeFile = String(req.body.nome_file || file.originalname || "documento").slice(0, 255);
+
+  // Dati di produzione: Excel o CSV, controllati leggendone davvero il contenuto.
+  // Tutti gli altri tipi: solo PDF.
+  let estensione = "pdf";
+  if (tipo === "produzione") {
+    estensione = formatoProduzione(file.buffer, nomeFile);
+    if (!estensione) {
+      return res.status(400).json({ errore: "Per i dati di produzione carica un file Excel (.xlsx, .xls) o .csv." });
+    }
+    try {
+      if (excelInCsv(file.buffer).length === 0) {
+        return res.status(400).json({ errore: "Il file Excel è vuoto." });
+      }
+    } catch {
+      return res.status(400).json({ errore: "Il file Excel non è leggibile. Prova a salvarlo di nuovo come .xlsx." });
+    }
+  } else if (file.buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+    return res.status(400).json({ errore: "Per schede tecniche e preventivi puoi caricare solo file PDF." });
+  }
+
+  const storagePath = `${progettoId}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${estensione}`;
   fs.mkdirSync(path.join(DOCUMENTI_DIR, progettoId), { recursive: true });
   fs.writeFileSync(path.join(DOCUMENTI_DIR, storagePath), file.buffer);
 
@@ -189,11 +208,21 @@ app.post("/api/progetti/:id/documenti", upload.single("file"), (req, res) => {
   res.status(201).json(doc);
 });
 
+const TIPI_FILE = {
+  pdf: "application/pdf",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  csv: "text/csv; charset=utf-8",
+};
+
 app.get("/api/documenti/:id/file", (req, res) => {
   const doc = db.prepare("select * from documenti where id = ?").get(req.params.id);
   if (!doc) return res.status(404).json({ errore: "Documento non trovato." });
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(doc.nome_file)}`);
+  const estensione = path.extname(doc.storage_path).slice(1);
+  // I PDF si aprono nel browser, gli Excel si scaricano
+  const modo = estensione === "pdf" ? "inline" : "attachment";
+  res.setHeader("Content-Type", TIPI_FILE[estensione] || "application/octet-stream");
+  res.setHeader("Content-Disposition", `${modo}; filename*=UTF-8''${encodeURIComponent(doc.nome_file)}`);
   res.sendFile(path.join(DOCUMENTI_DIR, doc.storage_path));
 });
 
@@ -212,8 +241,8 @@ app.delete("/api/documenti/:id", (req, res) => {
 // Avvia l'analisi in background; il browser controlla lo stato con GET
 app.post("/api/progetti/:id/analisi", (req, res) => {
   const progettoId = req.params.id;
-  const nDoc = db.prepare("select count(*) as n from documenti where progetto_id = ?").get(progettoId).n;
-  if (nDoc === 0) return res.status(400).json({ errore: "Carica almeno un documento prima di avviare l'analisi." });
+  const nPdf = db.prepare("select count(*) as n from documenti where progetto_id = ? and tipo != 'produzione'").get(progettoId).n;
+  if (nPdf === 0) return res.status(400).json({ errore: "Carica almeno un documento PDF (preventivo o scheda tecnica) prima di avviare l'analisi." });
   avviaAnalisi(progettoId);
   res.status(202).json(statoAnalisi(progettoId));
 });
@@ -225,6 +254,27 @@ app.get("/api/progetti/:id/analisi", (req, res) => {
   res.json({
     ...statoAnalisi(req.params.id),
     ultima: ultima ? { risultato: JSON.parse(ultima.risultato), creata_il: ultima.creata_il } : null,
+  });
+});
+
+// ─────────────────────────────────────────────
+//  Studio del rendimento (dai dati di produzione Excel)
+// ─────────────────────────────────────────────
+app.post("/api/progetti/:id/rendimento", (req, res) => {
+  const progettoId = req.params.id;
+  if (!db.prepare("select 1 from documenti where progetto_id = ? and tipo = 'produzione'").get(progettoId)) {
+    return res.status(400).json({ errore: "Carica almeno un file Excel con i dati di produzione." });
+  }
+  avviaRendimento(progettoId);
+  res.status(202).json(statoRendimento(progettoId));
+});
+
+app.get("/api/progetti/:id/rendimento", (req, res) => {
+  const ultimo = db.prepare("select * from studi_rendimento where progetto_id = ? order by creata_il desc limit 1")
+    .get(req.params.id);
+  res.json({
+    ...statoRendimento(req.params.id),
+    ultimo: ultimo ? { risultato: JSON.parse(ultimo.risultato), creata_il: ultimo.creata_il } : null,
   });
 });
 
@@ -265,22 +315,26 @@ function datiRapporto(progettoId) {
   if (!progetto) return null;
   const documenti = db.prepare("select nome_file, tipo, fornitore from documenti where progetto_id = ? order by tipo desc, caricato_il")
     .all(progettoId);
-  const ultima = db.prepare("select * from analisi where progetto_id = ? order by creata_il desc limit 1").get(progettoId);
-  const analisi = ultima ? { risultato: JSON.parse(ultima.risultato), creata_il: ultima.creata_il } : null;
-  return { progetto, documenti, analisi };
+  const ultimo = (tabella) => {
+    const r = db.prepare(`select * from ${tabella} where progetto_id = ? order by creata_il desc limit 1`).get(progettoId);
+    return r ? { risultato: JSON.parse(r.risultato), creata_il: r.creata_il } : null;
+  };
+  return { progetto, documenti, analisi: ultimo("analisi"), rendimento: ultimo("studi_rendimento") };
 }
+
+const SENZA_RISULTATI = "Questo progetto non ha ancora un'analisi delle offerte né uno studio del rendimento.";
 
 app.get("/api/progetti/:id/rapporto", (req, res) => {
   const dati = datiRapporto(req.params.id);
   if (!dati) return res.status(404).json({ errore: "Progetto non trovato." });
-  if (!dati.analisi) return res.status(400).json({ errore: "Questo progetto non ha ancora un'analisi." });
+  if (!dati.analisi && !dati.rendimento) return res.status(400).json({ errore: SENZA_RISULTATI });
   res.json(dati);
 });
 
 app.get("/api/progetti/:id/rapporto-word", async (req, res) => {
   const dati = datiRapporto(req.params.id);
   if (!dati) return res.status(404).json({ errore: "Progetto non trovato." });
-  if (!dati.analisi) return res.status(400).json({ errore: "Questo progetto non ha ancora un'analisi." });
+  if (!dati.analisi && !dati.rendimento) return res.status(400).json({ errore: SENZA_RISULTATI });
   const buffer = await creaRapportoWord(dati);
   const nome = `Valutazione - ${dati.progetto.nome}.docx`.replace(/[\\/:*?"<>|]/g, "_");
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");

@@ -29,8 +29,13 @@ const FIDUCIA = {
   media: "Media — alcune informazioni erano incomplete",
   bassa: "Bassa — mancano informazioni importanti, verificare bene",
 };
+const SEMAFORO_RENDIMENTO = {
+  verde: { colore: "16A34A", etichetta: "Rende bene" },
+  giallo: { colore: "D97706", etichetta: "Migliorabile" },
+  rosso: { colore: "DC2626", etichetta: "Problemi seri" },
+};
 const GRAVITA = { alta: "ALTA", media: "MEDIA", bassa: "BASSA" };
-const TIPO_DOC = { preventivo: "Preventivo", scheda_tecnica: "Scheda tecnica", altro: "Altro" };
+const TIPO_DOC = { preventivo: "Preventivo", scheda_tecnica: "Scheda tecnica", altro: "Altro", produzione: "Dati di produzione" };
 
 const dataIt = (iso) => new Date(iso).toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
 
@@ -84,16 +89,23 @@ function colonne(n, primaColonna) {
   return [primaColonna, ...Array(n - 1).fill(resto)];
 }
 
-export async function creaRapportoWord({ progetto, documenti, analisi }) {
-  const a = analisi.risultato;
+export async function creaRapportoWord({ progetto, documenti, analisi, rendimento }) {
+  // Il rapporto può avere l'analisi delle offerte, lo studio del rendimento o entrambi
+  const a = analisi?.risultato || {};
+  const r = rendimento?.risultato;
   const corpo = [];
+  const sottotitoloCopertina = analisi && rendimento ? "VALUTAZIONE MACCHINARIO" : analisi ? "VALUTAZIONE ACQUISTO" : "RENDIMENTO MACCHINARIO";
+  const righeDate = [
+    analisi && `Analisi delle offerte del ${dataIt(analisi.creata_il)}`,
+    rendimento && `Studio del rendimento del ${dataIt(rendimento.creata_il)}`,
+  ].filter(Boolean);
 
   // ── Copertina ──
   corpo.push(
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 1800, after: 600 },
       children: [new ImageRun({ type: "png", data: LOGO, transformation: { width: 280, height: Math.round(280 * 411 / 800) } })] }),
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 },
-      children: [new TextRun({ text: "VALUTAZIONE ACQUISTO", bold: true, size: 22, color: MUTO })] }),
+      children: [new TextRun({ text: sottotitoloCopertina, bold: true, size: 22, color: MUTO })] }),
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 },
       children: [new TextRun({ text: progetto.nome, bold: true, size: 48, color: BLU })] }),
   );
@@ -103,8 +115,9 @@ export async function creaRapportoWord({ progetto, documenti, analisi }) {
   corpo.push(
     new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 1200 },
       children: [new TextRun({ text: `Documento preparato il ${dataIt(new Date().toISOString())}`, color: MUTO })] }),
+    ...righeDate.map((t) => new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: t, color: MUTO })] })),
     new Paragraph({ alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: `Analisi del ${dataIt(analisi.creata_il)} su ${documenti.length} documenti`, color: MUTO })] }),
+      children: [new TextRun({ text: `${documenti.length} documenti nel progetto`, color: MUTO })] }),
     new Paragraph({ children: [new PageBreak()] }),
   );
 
@@ -188,6 +201,66 @@ export async function creaRapportoWord({ progetto, documenti, analisi }) {
         testo(p.spiegazione),
       );
     }
+  }
+
+  // ── Rendimento del macchinario (dai dati di produzione) ──
+  if (r) {
+    const g = SEMAFORO_RENDIMENTO[r.giudizio?.valutazione];
+    corpo.push(titolo("Rendimento del macchinario"));
+    if (r.periodo_analizzato) corpo.push(testo(`Periodo analizzato: ${r.periodo_analizzato}`, { color: MUTO }));
+    if (r.riepilogo) corpo.push(testo(r.riepilogo));
+    if (r.giudizio) {
+      corpo.push(new Paragraph({ spacing: { after: 120 }, children: [
+        new TextRun({ text: `● ${g ? g.etichetta : "Giudizio"}: `, bold: true, color: g?.colore }),
+        new TextRun(r.giudizio.spiegazione || ""),
+      ] }));
+    }
+    if (r.indicatori?.length) {
+      corpo.push(
+        sottotitolo("Indicatori principali"),
+        tabella(["Indicatore", "Valore", "Confronto"], r.indicatori.map((i) => [
+          (w) => cella(dueRighe(i.nome, i.cosa_significa), { larghezza: w }),
+          (w) => cella(i.valore, { larghezza: w, grassetto: true, fill: SEMAFORO[i.giudizio]?.fill }),
+          (w) => cella(i.riferimento, { larghezza: w }),
+        ]), [3600, 2200, 3838]),
+      );
+    }
+    if (r.andamento?.length) {
+      corpo.push(
+        sottotitolo("Andamento nel tempo"),
+        tabella(["Periodo", "Numeri principali", "Commento"], r.andamento.map((p) => [
+          (w) => cella(p.periodo, { larghezza: w, grassetto: true }),
+          (w) => cella(p.valori, { larghezza: w, fill: SEMAFORO[p.giudizio]?.fill }),
+          (w) => cella(p.commento, { larghezza: w }),
+        ]), [1900, 3400, 4338]),
+      );
+    }
+    if (r.fermi_e_problemi?.length) {
+      corpo.push(
+        sottotitolo("Fermi e problemi principali"),
+        tabella(["Problema", "Quanto pesa", "Spiegazione"], r.fermi_e_problemi.map((f) => [
+          (w) => cella(f.problema, { larghezza: w, grassetto: true }),
+          (w) => cella(f.quanto_pesa, { larghezza: w }),
+          (w) => cella(f.spiegazione, { larghezza: w }),
+        ]), [2600, 2300, 4738]),
+      );
+    }
+    if (r.cosa_va_bene?.length) corpo.push(sottotitolo("Cosa funziona bene"), ...elenco(r.cosa_va_bene));
+    if (r.consigli?.length) {
+      corpo.push(sottotitolo("Consigli"));
+      for (const c of r.consigli) {
+        corpo.push(
+          new Paragraph({ spacing: { before: 120, after: 40 }, children: [
+            new TextRun({ text: `[PRIORITÀ ${GRAVITA[c.priorita] || ""}] `, bold: true, color: c.priorita === "alta" ? "DC2626" : MUTO }),
+            new TextRun({ text: c.azione, bold: true }),
+          ] }),
+          testo(c.perche),
+          testo(`Beneficio atteso: ${c.beneficio_atteso}`, { italics: true }),
+        );
+      }
+    }
+    if (r.dati_mancanti?.length) corpo.push(sottotitolo("Per uno studio più preciso servirebbero"), ...elenco(r.dati_mancanti));
+    if (r.metodo) corpo.push(etichetta("Come sono stati calcolati i numeri"), testo(r.metodo, { size: 18, color: MUTO }));
   }
 
   // ── Documenti analizzati ──

@@ -27,12 +27,12 @@ db.exec(`
     creato_il text not null
   );
 
-  -- ── Documenti (metadati; i PDF stanno in DATA_DIR/documenti) ──
+  -- ── Documenti (metadati; i file PDF ed Excel stanno in DATA_DIR/documenti) ──
   create table if not exists documenti (
     id text primary key,
     progetto_id text not null references progetti(id) on delete cascade,
     nome_file text not null,
-    tipo text not null check (tipo in ('scheda_tecnica', 'preventivo', 'altro')),
+    tipo text not null check (tipo in ('scheda_tecnica', 'preventivo', 'altro', 'produzione')),
     fornitore text,
     storage_path text not null,
     caricato_il text not null
@@ -40,6 +40,14 @@ db.exec(`
 
   -- ── Analisi (risultati AI in formato JSON) ──
   create table if not exists analisi (
+    id text primary key,
+    progetto_id text not null references progetti(id) on delete cascade,
+    risultato text not null,
+    creata_il text not null
+  );
+
+  -- ── Studi di rendimento del macchinario (dai dati di produzione Excel) ──
+  create table if not exists studi_rendimento (
     id text primary key,
     progetto_id text not null references progetti(id) on delete cascade,
     risultato text not null,
@@ -65,6 +73,29 @@ db.exec(`
     scade_il integer not null
   );
 `);
+
+// Migrazione: i database creati prima dei dati di produzione non accettano
+// il tipo 'produzione' (SQLite non modifica i vincoli: si ricrea la tabella)
+const sqlDocumenti = db.prepare("select sql from sqlite_master where type = 'table' and name = 'documenti'").get().sql;
+if (!sqlDocumenti.includes("'produzione'")) {
+  db.transaction(() => {
+    db.exec(`
+      create table documenti_nuova (
+        id text primary key,
+        progetto_id text not null references progetti(id) on delete cascade,
+        nome_file text not null,
+        tipo text not null check (tipo in ('scheda_tecnica', 'preventivo', 'altro', 'produzione')),
+        fornitore text,
+        storage_path text not null,
+        caricato_il text not null
+      );
+      insert into documenti_nuova select id, progetto_id, nome_file, tipo, fornitore, storage_path, caricato_il from documenti;
+      drop table documenti;
+      alter table documenti_nuova rename to documenti;
+    `);
+  })();
+  console.log("Database aggiornato: aggiunto il tipo documento 'produzione'.");
+}
 
 // Le domande rimaste "in corso" sono state interrotte da un riavvio del servizio
 db.prepare("update domande set stato = 'errore', errore = ? where stato = 'in_corso'")

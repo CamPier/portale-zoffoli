@@ -16,6 +16,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { db, DOCUMENTI_DIR } from "./db.js";
+import { excelInCsv } from "./excel.js";
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "opus";
@@ -26,36 +27,69 @@ const ETICHETTE = {
   altro: "DOCUMENTO",
 };
 
-// Copia i PDF del progetto in una cartella temporanea con nomi semplici
-// (documento-01.pdf, ...). Restituisce la cartella e l'elenco descrittivo
-// da mettere nel prompt. La cartella va rimossa con rimuoviCartella().
-export async function preparaCartella(progettoId, prefisso = "lavoro-") {
+// Copia i documenti del progetto in una cartella temporanea con nomi semplici:
+//   PDF            → documento-01.pdf, documento-02.pdf, ...
+//   Excel/CSV      → produzione-01-<foglio>.csv (un CSV per foglio)
+// "soloPdf" esclude i dati di produzione (usato dall'analisi delle offerte).
+// Restituisce la cartella, l'elenco descrittivo da mettere nel prompt e
+// quanti file di ogni genere ci sono. Va rimossa con rimuoviCartella().
+export async function preparaCartella(progettoId, { prefisso = "lavoro-", soloPdf = false } = {}) {
   const documenti = db
     .prepare("select * from documenti where progetto_id = ? order by tipo desc, caricato_il")
-    .all(progettoId);
-  if (documenti.length === 0) throw new Error("Nessun documento trovato per questo progetto.");
+    .all(progettoId)
+    .filter((d) => !soloPdf || d.tipo !== "produzione");
+  if (documenti.length === 0) {
+    throw new Error(soloPdf ? "Nessun documento PDF trovato per questo progetto." : "Nessun documento trovato per questo progetto.");
+  }
 
   const cartella = await fs.mkdtemp(path.join(os.tmpdir(), prefisso));
   try {
     const righe = [];
-    for (let i = 0; i < documenti.length; i++) {
-      const doc = documenti[i];
-      const nome = `documento-${String(i + 1).padStart(2, "0")}.pdf`;
+    let nPdf = 0;
+    let nProduzione = 0;
+    for (const doc of documenti) {
+      let contenuto;
       try {
-        await fs.copyFile(path.join(DOCUMENTI_DIR, doc.storage_path), path.join(cartella, nome));
+        contenuto = await fs.readFile(path.join(DOCUMENTI_DIR, doc.storage_path));
       } catch {
         throw new Error(`Impossibile leggere il file "${doc.nome_file}".`);
       }
-      const etichetta = ETICHETTE[doc.tipo] ?? "DOCUMENTO";
-      const fornitore = doc.fornitore ? ` — Fornitore: ${doc.fornitore}` : "";
-      righe.push(`- ${nome}: ${etichetta}${fornitore} — Nome file originale: ${doc.nome_file}`);
+      const fornitore = doc.fornitore ? ` — Fornitore/macchina: ${doc.fornitore}` : "";
+
+      if (doc.tipo === "produzione") {
+        nProduzione++;
+        let fogli;
+        try {
+          fogli = excelInCsv(contenuto);
+        } catch {
+          throw new Error(`Il file di produzione "${doc.nome_file}" non è leggibile.`);
+        }
+        for (const f of fogli) {
+          const nome = `produzione-${String(nProduzione).padStart(2, "0")}-${nomeSicuro(f.foglio)}.csv`;
+          await fs.writeFile(path.join(cartella, nome), f.csv);
+          righe.push(`- ${nome}: DATI DI PRODUZIONE${fornitore} — foglio "${f.foglio}" del file "${doc.nome_file}" — ` +
+            `${f.righe} righe di dati — intestazione: ${f.intestazione.slice(0, 500)}`);
+        }
+      } else {
+        nPdf++;
+        const nome = `documento-${String(nPdf).padStart(2, "0")}.pdf`;
+        await fs.writeFile(path.join(cartella, nome), contenuto);
+        righe.push(`- ${nome}: ${ETICHETTE[doc.tipo] ?? "DOCUMENTO"}${fornitore} — Nome file originale: ${doc.nome_file}`);
+      }
     }
-    return { cartella, documenti, elenco: righe.join("\n") };
+    return { cartella, documenti, elenco: righe.join("\n"), nPdf, nProduzione };
   } catch (err) {
     await rimuoviCartella(cartella);
     throw err;
   }
 }
+
+const nomeSicuro = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "foglio";
+
+// Strumenti concessi a Claude: solo lettura dei file, oppure lettura + Python
+// (per i calcoli sui dati di produzione: unico comando shell consentito)
+export const STRUMENTI_LETTURA = { tools: "Read", consentiti: ["Read"] };
+export const STRUMENTI_PYTHON = { tools: "Read,Bash", consentiti: ["Read", "Bash(python3:*)"] };
 
 export function rimuoviCartella(cartella) {
   return fs.rm(cartella, { recursive: true, force: true });
@@ -63,15 +97,17 @@ export function rimuoviCartella(cartella) {
 
 // Lancia `claude -p` e restituisce l'esito JSON della CLI
 // (campi utili: result, structured_output, total_cost_usd, duration_ms).
-export function eseguiClaude({ istruzioni, cartella, sistema, schema, maxTurni = 60, timeoutMs, cosa = "L'operazione" }) {
+export function eseguiClaude({
+  istruzioni, cartella, sistema, schema, maxTurni = 60, timeoutMs, cosa = "L'operazione",
+  strumenti = STRUMENTI_LETTURA,
+}) {
   const args = [
     "-p",
     "--output-format", "json",
     "--model", CLAUDE_MODEL,
     "--append-system-prompt", sistema,
-    // Unico strumento disponibile: la lettura dei file della cartella di lavoro
-    "--tools", "Read",
-    "--allowedTools", "Read",
+    "--tools", strumenti.tools,
+    "--allowedTools", ...strumenti.consentiti,
     "--max-turns", String(maxTurni),
   ];
   if (schema) args.push("--json-schema", JSON.stringify(schema));

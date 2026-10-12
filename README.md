@@ -26,6 +26,19 @@ Claude Code in modalità non interattiva. Può usare solo lo strumento di lettur
 e deve rispondere secondo lo schema JSON che il frontend sa visualizzare.
 L'analisi gira in background: si può chiudere la pagina e tornare più tardi.
 
+**Rendimento del macchinario**: nei documenti si può caricare l'Excel con i dati di
+produzione della macchina (tipo *Dati di produzione*: `.xlsx`, `.xls` o `.csv`). Il server
+converte ogni foglio in CSV e Claude calcola con Python (pandas) pezzi all'ora, scarti,
+fermi e cause, andamento nel tempo e, se c'è la scheda tecnica, il confronto con i valori
+di targa. Il risultato compare nel riquadro *Rendimento del macchinario* e nei rapporti.
+Non serve un formato fisso dell'Excel: Claude riconosce le colonne da solo e indica nel
+campo "metodo" come le ha interpretate.
+
+> Per questi calcoli Claude può eseguire `python3` (l'unico comando shell consentito,
+> oltre a quelli di sola lettura che Claude Code approva sempre). Python però è un
+> linguaggio completo: è una limitazione pensata per l'uso interno con file caricati
+> da colleghi, non una barriera di sicurezza contro file malevoli.
+
 **Domande**: in fondo a ogni progetto c'è la sezione *Fai una domanda*. Claude risponde
 partendo dall'analisi già fatta e rilegge i PDF solo quando serve un dettaglio,
 indicando sempre documento e pagina. La conversazione resta salvata nel progetto
@@ -151,7 +164,7 @@ npm start                 # http://localhost:3000
 
 ## Limiti da conoscere
 
-- Solo file **PDF**, max 20 MB l'uno.
+- File **PDF** (schede tecniche, preventivi) ed **Excel/CSV** (dati di produzione), max 20 MB l'uno.
 - Un'analisi richiede qualche minuto (massimo `ANALISI_TIMEOUT_MIN`, di default 15).
 - Se il servizio viene riavviato durante un'analisi, l'analisi si interrompe: va rilanciata.
 - Con il token personale valgono i limiti d'uso del proprio abbonamento Claude, condivisi

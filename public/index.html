@@ -84,12 +84,12 @@
         <div class="col">
           <div class="card">
             <h2>📄 Documenti</h2>
-            <p class="hint">Carica le schede tecniche del macchinario e i preventivi ricevuti (file PDF).</p>
+            <p class="hint">Carica le schede tecniche e i preventivi (PDF) e, per studiare come rende la macchina, i dati di produzione (Excel).</p>
 
             <form id="form-upload">
               <div class="form-field">
-                <label for="up-file">File PDF *</label>
-                <input type="file" id="up-file" accept="application/pdf" required>
+                <label for="up-file">File (PDF o Excel) *</label>
+                <input type="file" id="up-file" accept="application/pdf,.pdf,.xlsx,.xls,.csv" required>
               </div>
               <div class="form-row">
                 <div class="form-field grow">
@@ -98,6 +98,7 @@
                     <option value="preventivo">Preventivo</option>
                     <option value="scheda_tecnica">Scheda tecnica</option>
                     <option value="altro">Altro</option>
+                    <option value="produzione">Dati di produzione (Excel)</option>
                   </select>
                 </div>
                 <div class="form-field grow">
@@ -140,6 +141,23 @@
           <div id="analisi-risultato" hidden></div>
         </div>
 
+      </div>
+
+      <!-- Studio del rendimento del macchinario (dati di produzione Excel) -->
+      <div class="card rendimento-card">
+        <h2>📈 Rendimento del macchinario</h2>
+        <p class="hint">
+          Carica l'Excel con i dati di produzione (tipo documento <strong>Dati di produzione</strong>):
+          l'assistente calcola pezzi all'ora, scarti, fermi e andamento nel tempo, li confronta con i dati
+          della scheda tecnica e ti dice cosa migliorare.
+        </p>
+        <button class="btn btn-accent" id="btn-rendimento">📊 Studia il rendimento</button>
+        <p class="form-error" id="rendimento-error" hidden></p>
+        <div id="rendimento-loading" class="loading" hidden>
+          <div class="spinner"></div>
+          <p>Sto facendo i calcoli sui dati di produzione…<br><small>Può richiedere qualche minuto. Puoi chiudere la pagina: lo studio continua sul server.</small></p>
+        </div>
+        <div id="rendimento-risultato" hidden></div>
       </div>
 
       <!-- Domande sui documenti e sull'analisi -->

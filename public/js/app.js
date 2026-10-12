@@ -6,6 +6,7 @@
 let progettoCorrente = null;
 let timerAnalisi = null;
 let timerDomande = null;
+let timerRendimento = null;
 
 // Scorciatoia
 const $ = (id) => document.getElementById(id);
@@ -181,9 +182,16 @@ async function apriProgetto(p) {
   ultimaAnalisiMostrata = null;
   analisiInAttesa = false;
   firmaConversazione = "";
+  $("rendimento-risultato").hidden = true;
+  $("rendimento-risultato").innerHTML = "";
+  $("rendimento-error").hidden = true;
+  ultimoRendimentoMostrato = null;
+  rendimentoInAttesa = false;
+  haAnalisi = false;
+  haRendimento = false;
   mostraVista("view-progetto");
   await caricaDocumenti();
-  await Promise.all([controllaAnalisi(), caricaDomande()]);
+  await Promise.all([controllaAnalisi(), controllaRendimento(), caricaDomande()]);
 }
 
 // ─────────────────────────────────────────────
@@ -193,6 +201,7 @@ const ETICHETTE_TIPO = {
   preventivo: "Preventivo",
   scheda_tecnica: "Scheda tecnica",
   altro: "Altro",
+  produzione: "Dati di produzione",
 };
 
 async function caricaDocumenti() {
@@ -208,7 +217,7 @@ async function caricaDocumenti() {
   for (const d of data) {
     const li = document.createElement("li");
     li.innerHTML =
-      `<span class="doc-icona">📄</span>` +
+      `<span class="doc-icona">${d.tipo === "produzione" ? "📊" : "📄"}</span>` +
       `<div class="doc-info">` +
       `<div class="doc-nome">${escapeHtml(d.nome_file)}</div>` +
       `<div class="doc-meta"><span class="badge badge-${d.tipo}">${ETICHETTE_TIPO[d.tipo] || d.tipo}</span>` +
@@ -239,13 +248,22 @@ $("form-upload").addEventListener("submit", async (e) => {
   const file = $("up-file").files[0];
   if (!file) return;
 
-  if (file.type !== "application/pdf") {
-    err.textContent = "Puoi caricare solo file PDF.";
+  const tipo = $("up-tipo").value;
+  const excel = ESTENSIONI_EXCEL.includes(estensione(file.name));
+  if (tipo === "produzione" && !excel) {
+    err.textContent = "Per i dati di produzione carica un file Excel (.xlsx, .xls) o .csv.";
+    err.hidden = false;
+    return;
+  }
+  if (tipo !== "produzione" && estensione(file.name) !== "pdf") {
+    err.textContent = excel
+      ? "Per un file Excel scegli il tipo documento \"Dati di produzione\"."
+      : "Per schede tecniche e preventivi puoi caricare solo file PDF.";
     err.hidden = false;
     return;
   }
   if (file.size > 20 * 1024 * 1024) {
-    err.textContent = "Il file supera i 20 MB. Riduci il PDF e riprova.";
+    err.textContent = "Il file supera i 20 MB. Riduci il file e riprova.";
     err.hidden = false;
     return;
   }
@@ -273,8 +291,23 @@ $("form-upload").addEventListener("submit", async (e) => {
   }
 });
 
+const ESTENSIONI_EXCEL = ["xlsx", "xls", "csv"];
+const estensione = (nome) => String(nome).toLowerCase().split(".").pop();
+
+// Scegliendo un Excel il tipo passa da solo a "Dati di produzione" (e viceversa per i PDF)
+$("up-file").addEventListener("change", () => {
+  const file = $("up-file").files[0];
+  if (!file) return;
+  if (ESTENSIONI_EXCEL.includes(estensione(file.name))) {
+    $("up-tipo").value = "produzione";
+  } else if ($("up-tipo").value === "produzione") {
+    $("up-tipo").value = "preventivo";
+  }
+});
+
 function apriDocumento(doc) {
-  // Il cookie di sessione protegge anche il download del PDF
+  // Il cookie di sessione protegge anche il download del file
+  // (i PDF si aprono nel browser, gli Excel si scaricano)
   window.open(`/api/documenti/${doc.id}/file`, "_blank");
 }
 
@@ -296,8 +329,9 @@ $("btn-analizza").addEventListener("click", async () => {
   // Controllo rapido: servono documenti
   let docs = [];
   try { docs = await api("GET", `/api/progetti/${progettoCorrente.id}/documenti`); } catch (_) { /* lo segnala il server */ }
+  docs = docs.filter((d) => d.tipo !== "produzione"); // l'analisi delle offerte usa solo i PDF
   if (docs.length === 0) {
-    err.textContent = "Carica almeno un documento prima di avviare l'analisi.";
+    err.textContent = "Carica almeno un preventivo o una scheda tecnica (PDF) prima di avviare l'analisi.";
     err.hidden = false;
     return;
   }
@@ -344,7 +378,8 @@ async function controllaAnalisi(appenaAvviata = false) {
 
   $("btn-analizza").disabled = stato.in_corso;
   $("analisi-loading").hidden = !stato.in_corso;
-  $("export-azioni").hidden = !stato.ultima || stato.in_corso;
+  haAnalisi = !!stato.ultima && !stato.in_corso;
+  aggiornaExport();
 
   if (stato.in_corso) {
     analisiInAttesa = true;
@@ -370,8 +405,154 @@ async function controllaAnalisi(appenaAvviata = false) {
 function fermaControlli() {
   clearTimeout(timerAnalisi);
   clearTimeout(timerDomande);
+  clearTimeout(timerRendimento);
   timerAnalisi = null;
   timerDomande = null;
+  timerRendimento = null;
+}
+
+// Il rapporto per la direzione si può esportare se c'è almeno
+// un'analisi delle offerte o uno studio del rendimento
+let haAnalisi = false;
+let haRendimento = false;
+function aggiornaExport() {
+  $("export-azioni").hidden = !(haAnalisi || haRendimento);
+}
+
+// ─────────────────────────────────────────────
+//  Studio del rendimento (dati di produzione Excel)
+// ─────────────────────────────────────────────
+let rendimentoInAttesa = false;
+let ultimoRendimentoMostrato = null;
+
+$("btn-rendimento").addEventListener("click", async () => {
+  const err = $("rendimento-error");
+  err.hidden = true;
+  try {
+    await api("POST", `/api/progetti/${progettoCorrente.id}/rendimento`);
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+    return;
+  }
+  $("rendimento-risultato").hidden = true;
+  await controllaRendimento(true);
+});
+
+async function controllaRendimento(appenaAvviato = false) {
+  clearTimeout(timerRendimento);
+  if (!progettoCorrente) return;
+  const progettoId = progettoCorrente.id;
+  if (appenaAvviato) rendimentoInAttesa = true;
+
+  let stato;
+  try {
+    stato = await api("GET", `/api/progetti/${progettoId}/rendimento`);
+  } catch (_) {
+    if (rendimentoInAttesa) timerRendimento = setTimeout(controllaRendimento, 10000);
+    return;
+  }
+  if (!progettoCorrente || progettoCorrente.id !== progettoId) return;
+
+  $("btn-rendimento").disabled = stato.in_corso;
+  $("rendimento-loading").hidden = !stato.in_corso;
+  haRendimento = !!stato.ultimo && !stato.in_corso;
+  aggiornaExport();
+
+  if (stato.in_corso) {
+    rendimentoInAttesa = true;
+    timerRendimento = setTimeout(controllaRendimento, 5000);
+    return;
+  }
+  if (rendimentoInAttesa && stato.errore) {
+    $("rendimento-error").textContent = "Errore durante lo studio: " + stato.errore;
+    $("rendimento-error").hidden = false;
+  }
+  rendimentoInAttesa = false;
+
+  if (stato.ultimo && stato.ultimo.creata_il !== ultimoRendimentoMostrato) {
+    mostraRendimento(stato.ultimo.risultato, stato.ultimo.creata_il);
+    ultimoRendimentoMostrato = stato.ultimo.creata_il;
+  } else if (stato.ultimo) {
+    $("rendimento-risultato").hidden = false;
+  }
+}
+
+const GIUDIZIO_RENDIMENTO = {
+  verde: "🟢 Rende bene",
+  giallo: "🟡 Migliorabile",
+  rosso: "🔴 Problemi seri",
+};
+
+function mostraRendimento(r, dataCreazione) {
+  let html = "";
+
+  if (r.giudizio) {
+    html += sezione("📋 Com'è andata", `
+      <div class="verdetto-card">
+        <div class="verdetto-eyebrow">${escapeHtml(r.periodo_analizzato || "Periodo analizzato")}</div>
+        <div class="verdetto-fornitore">${GIUDIZIO_RENDIMENTO[r.giudizio.valutazione] || ""}</div>
+        <p class="verdetto-motivazione">${escapeHtml(r.riepilogo || "")}</p>
+        <p class="fiducia">${escapeHtml(r.giudizio.spiegazione || "")}</p>
+      </div>`);
+  }
+
+  if (r.indicatori && r.indicatori.length) {
+    let tab = `<div class="tabella-wrap"><table class="comparativa"><thead><tr>
+      <th>Indicatore</th><th>Valore</th><th>Confronto</th></tr></thead><tbody>`;
+    for (const i of r.indicatori) {
+      tab += `<tr><td><strong>${escapeHtml(i.nome)}</strong><br><small class="muted">${escapeHtml(i.cosa_significa)}</small></td>
+        <td class="giudizio-${escapeHtml(i.giudizio)}"><strong>${escapeHtml(i.valore)}</strong></td>
+        <td>${escapeHtml(i.riferimento)}</td></tr>`;
+    }
+    html += sezione("🔢 I numeri principali", tab + `</tbody></table></div>`);
+  }
+
+  if (r.andamento && r.andamento.length) {
+    let tab = `<div class="tabella-wrap"><table class="comparativa"><thead><tr>
+      <th>Periodo</th><th>Numeri</th><th>Commento</th></tr></thead><tbody>`;
+    for (const p of r.andamento) {
+      tab += `<tr><td><strong>${escapeHtml(p.periodo)}</strong></td>
+        <td class="giudizio-${escapeHtml(p.giudizio)}">${escapeHtml(p.valori)}</td><td>${escapeHtml(p.commento)}</td></tr>`;
+    }
+    html += sezione("📈 Andamento nel tempo", tab + `</tbody></table></div>`);
+  }
+
+  if (r.fermi_e_problemi && r.fermi_e_problemi.length) {
+    let corpo = "";
+    for (const f of r.fermi_e_problemi) {
+      corpo += `<div class="attenzione-item grave"><strong>⛔ ${escapeHtml(f.problema)} — ${escapeHtml(f.quanto_pesa)}</strong>
+        ${escapeHtml(f.spiegazione)}</div>`;
+    }
+    html += sezione("⛔ Fermi e problemi principali", corpo);
+  }
+
+  if (r.cosa_va_bene && r.cosa_va_bene.length) {
+    html += sezione("✅ Cosa funziona bene", `<div class="card">${listaPF("", r.cosa_va_bene)}</div>`);
+  }
+
+  if (r.consigli && r.consigli.length) {
+    let corpo = "";
+    for (const c of r.consigli) {
+      corpo += `<div class="attenzione-item ${c.priorita === "alta" ? "grave" : ""}">
+        <strong>${c.priorita === "alta" ? "🔥" : "💡"} ${escapeHtml(c.azione)}</strong>
+        ${escapeHtml(c.perche)}<br><em>Beneficio atteso: ${escapeHtml(c.beneficio_atteso)}</em></div>`;
+    }
+    html += sezione("💡 Cosa fare per migliorare", corpo);
+  }
+
+  if (r.dati_mancanti && r.dati_mancanti.length) {
+    html += sezione("📝 Per uno studio più preciso servirebbero", `<div class="card">${listaPF("", r.dati_mancanti)}</div>`);
+  }
+
+  if (r.metodo) {
+    html += `<details class="metodo"><summary>Come sono stati calcolati i numeri</summary><p>${escapeHtml(r.metodo)}</p></details>`;
+  }
+
+  html += `<p class="analisi-data">Studio generato il ${formattaDataOra(dataCreazione)} · ricontrolla sempre i dati importanti sull'Excel originale</p>`;
+
+  $("rendimento-risultato").innerHTML = html;
+  $("rendimento-risultato").hidden = false;
 }
 
 // ─────────────────────────────────────────────

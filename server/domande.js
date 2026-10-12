@@ -8,13 +8,14 @@
 
 import crypto from "node:crypto";
 import { db } from "./db.js";
-import { eseguiClaude, preparaCartella, rimuoviCartella } from "./claude.js";
+import { eseguiClaude, preparaCartella, rimuoviCartella, STRUMENTI_LETTURA, STRUMENTI_PYTHON } from "./claude.js";
 
 const TIMEOUT_MS = Number(process.env.DOMANDE_TIMEOUT_MIN || 8) * 60 * 1000;
 const STORICO = 8; // quante domande/risposte precedenti passare come contesto
 
-const PROMPT_DOMANDE = `Sei un consulente acquisti esperto di macchinari industriali che lavora per un'azienda italiana.
-Rispondi alle domande dei colleghi su un progetto di acquisto: i documenti PDF del progetto (schede tecniche e preventivi) e l'analisi comparativa già preparata.
+const PROMPT_DOMANDE = `Sei un consulente esperto di macchinari industriali (acquisti e produzione) che lavora per un'azienda italiana.
+Rispondi alle domande dei colleghi su un progetto: i documenti PDF (schede tecniche e preventivi), gli eventuali dati di produzione
+della macchina (file CSV ricavati dagli Excel), l'analisi delle offerte e lo studio del rendimento, se già preparati.
 
 Il tuo pubblico: OPERATORI NON TECNICI. Regole di scrittura, sempre:
 - Italiano semplice e diretto, frasi corte, numeri concreti.
@@ -23,10 +24,11 @@ Il tuo pubblico: OPERATORI NON TECNICI. Regole di scrittura, sempre:
 - Formattazione ammessa: paragrafi, elenchi puntati con "- ", elenchi numerati, **grassetto**. Niente tabelle, niente titoli.
 
 Regole sul contenuto:
-- Basati SOLO su documenti e analisi. Se l'informazione non c'è, dillo chiaramente invece di inventare.
-- Indica sempre da dove prendi i dati: fornitore o nome file originale e pagina, es. (Preventivo Rossi, pag. 2). Non citare mai i nomi "documento-01.pdf".
-- Se l'analisi basta per rispondere, non rileggere i PDF. Se serve un dettaglio che l'analisi non riporta, o se la domanda chiede di verificare un dato, leggi i PDF pertinenti con lo strumento Read.
-- Se la domanda non riguarda questo acquisto, rispondi brevemente che puoi aiutare solo su documenti e analisi del progetto.`;
+- Basati SOLO su documenti, dati, analisi e studio. Se l'informazione non c'è, dillo chiaramente invece di inventare.
+- Indica sempre da dove prendi i dati: fornitore o nome file originale e pagina, es. (Preventivo Rossi, pag. 2). Non citare mai i nomi "documento-01.pdf" o "produzione-01-...csv".
+- Se l'analisi o lo studio bastano per rispondere, non rileggere i file. Se serve un dettaglio che non riportano, o se la domanda chiede di verificare un dato, leggi i PDF pertinenti con lo strumento Read.
+- Per domande sui dati di produzione che richiedono calcoli (totali, medie, confronti tra periodi o turni) usa python3 con pandas sui CSV, se il comando è disponibile: mai calcoli a occhio. Non puoi creare file, stampa i risultati.
+- Se la domanda non riguarda questo progetto, rispondi brevemente che puoi aiutare solo su documenti e dati del progetto.`;
 
 // Una sola domanda in corso per progetto
 export function domandaInCorso(progettoId) {
@@ -76,13 +78,23 @@ async function rispondi({ id, progetto_id: progettoId, domanda }) {
      order by creata_il desc limit ?`,
   ).all(progettoId, id, STORICO).reverse();
 
-  const { cartella, documenti, elenco } = await preparaCartella(progettoId, "domanda-");
+  const studio = db.prepare("select risultato, creata_il from studi_rendimento where progetto_id = ? order by creata_il desc limit 1")
+    .get(progettoId);
+
+  const { cartella, elenco, nPdf, nProduzione } = await preparaCartella(progettoId, { prefisso: "domanda-" });
   try {
     let istruzioni = `PROGETTO: ${progetto.nome}${progetto.descrizione ? " — " + progetto.descrizione : ""}\n\n`;
-    istruzioni += `DOCUMENTI PDF nella cartella corrente (${documenti.length}):\n${elenco}\n\n`;
-    istruzioni += analisi
-      ? `ANALISI GIÀ PREPARATA (JSON, del ${analisi.creata_il.slice(0, 10)}):\n${analisi.risultato}\n\n`
-      : "ANALISI: non ancora fatta. Per rispondere leggi i PDF.\n\n";
+    istruzioni += `FILE nella cartella corrente:\n${elenco}\n\n`;
+    if (nPdf > 0) {
+      istruzioni += analisi
+        ? `ANALISI DELLE OFFERTE GIÀ PREPARATA (JSON, del ${analisi.creata_il.slice(0, 10)}):\n${analisi.risultato}\n\n`
+        : "ANALISI DELLE OFFERTE: non ancora fatta. Per rispondere leggi i PDF.\n\n";
+    }
+    if (nProduzione > 0) {
+      istruzioni += studio
+        ? `STUDIO DEL RENDIMENTO GIÀ PREPARATO (JSON, del ${studio.creata_il.slice(0, 10)}):\n${studio.risultato}\n\n`
+        : "STUDIO DEL RENDIMENTO: non ancora fatto. Per le domande sulla produzione calcola dai CSV con python3.\n\n";
+    }
     if (precedenti.length) {
       istruzioni += "CONVERSAZIONE PRECEDENTE:\n" +
         precedenti.map((p) => `Domanda: ${p.domanda}\nRisposta: ${p.risposta}`).join("\n\n") + "\n\n";
@@ -93,6 +105,8 @@ async function rispondi({ id, progetto_id: progettoId, domanda }) {
       istruzioni,
       cartella,
       sistema: PROMPT_DOMANDE,
+      // Python solo se ci sono dati di produzione su cui fare calcoli
+      strumenti: nProduzione > 0 ? STRUMENTI_PYTHON : STRUMENTI_LETTURA,
       maxTurni: 30,
       timeoutMs: TIMEOUT_MS,
       cosa: "La risposta",

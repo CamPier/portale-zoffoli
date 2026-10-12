@@ -186,6 +186,7 @@ input:focus, select:focus { outline: 2px solid var(--blu); outline-offset: 1px; 
 .badge-preventivo { background: #e0edff; color: var(--blu); }
 .badge-scheda_tecnica { background: #f3e8ff; color: var(--accento); }
 .badge-altro { background: #f1f5f9; color: var(--testo-muto); }
+.badge-produzione { background: var(--verde-bg); color: var(--verde); }
 
 /* ── Caricamento analisi ── */
 .loading { text-align: center; padding: 26px 0 10px; color: var(--testo-muto); }
@@ -305,3 +306,9 @@ table.comparativa, table.manutenzione {
   border: 1px solid var(--bordo); border-radius: 10px;
 }
 .domanda-form textarea:focus { outline: 2px solid var(--blu); outline-offset: -1px; }
+
+/* ═══════════ Rendimento del macchinario ═══════════ */
+.rendimento-card { margin-top: 22px; }
+.metodo { margin-top: 18px; font-size: .85rem; color: var(--testo-muto); }
+.metodo summary { cursor: pointer; font-weight: 600; }
+.metodo p { margin-top: 8px; }

@@ -156,7 +156,7 @@ export function avviaAnalisi(progettoId) {
 }
 
 async function eseguiAnalisi(progettoId) {
-  const { cartella, documenti, elenco } = await preparaCartella(progettoId, "analisi-");
+  const { cartella, documenti, elenco } = await preparaCartella(progettoId, { prefisso: "analisi-", soloPdf: true });
   try {
     const istruzioni =
       `Nella cartella corrente ci sono ${documenti.length} documenti PDF:\n${elenco}\n\n` +

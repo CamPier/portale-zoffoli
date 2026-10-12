@@ -11,7 +11,8 @@ const FIDUCIA = {
   media: "Media — alcune informazioni erano incomplete",
   bassa: "Bassa — mancano informazioni importanti, verificare bene",
 };
-const TIPO_DOC = { preventivo: "Preventivo", scheda_tecnica: "Scheda tecnica", altro: "Altro" };
+const GIUDIZIO_RENDIMENTO = { verde: "Rende bene", giallo: "Migliorabile", rosso: "Problemi seri" };
+const TIPO_DOC = { preventivo: "Preventivo", scheda_tecnica: "Scheda tecnica", altro: "Altro", produzione: "Dati di produzione" };
 
 function escapeHtml(testo) {
   if (testo === null || testo === undefined) return "";
@@ -46,18 +47,23 @@ async function avvia() {
   $("suggerimento").hidden = false;
 }
 
-function componi({ progetto, documenti, analisi }) {
-  const a = analisi.risultato;
+function componi({ progetto, documenti, analisi, rendimento }) {
+  // Il rapporto può avere l'analisi delle offerte, lo studio del rendimento o entrambi
+  const a = analisi?.risultato || {};
+  const r = rendimento?.risultato;
   let h = "";
 
   // Copertina
+  const eyebrow = analisi && rendimento ? "VALUTAZIONE MACCHINARIO" : analisi ? "VALUTAZIONE ACQUISTO" : "RENDIMENTO MACCHINARIO";
   h += `<section class="copertina">
     <img src="img/logo.png" alt="Zoffoli Metalli">
-    <div class="eyebrow">VALUTAZIONE ACQUISTO</div>
+    <div class="eyebrow">${eyebrow}</div>
     <h1>${e(progetto.nome)}</h1>
     ${progetto.descrizione ? `<div class="descr">${e(progetto.descrizione)}</div>` : ""}
     <div class="date">Documento preparato il ${dataIt(new Date().toISOString())}<br>
-      Analisi del ${dataIt(analisi.creata_il)} su ${documenti.length} documenti</div>
+      ${analisi ? `Analisi delle offerte del ${dataIt(analisi.creata_il)}<br>` : ""}
+      ${rendimento ? `Studio del rendimento del ${dataIt(rendimento.creata_il)}<br>` : ""}
+      ${documenti.length} documenti nel progetto</div>
   </section>`;
 
   if (a.riepilogo) h += `<h2>In breve</h2><p>${e(a.riepilogo)}</p>`;
@@ -118,6 +124,8 @@ function componi({ progetto, documenti, analisi }) {
     }
   }
 
+  if (r) h += componiRendimento(r);
+
   h += `<h2>Documenti analizzati</h2><table><thead><tr><th>Documento</th><th>Tipo</th><th>Fornitore</th></tr></thead><tbody>`;
   for (const d of documenti) {
     h += `<tr><td>${e(d.nome_file)}</td><td>${e(TIPO_DOC[d.tipo] || d.tipo)}</td><td>${e(d.fornitore || "—")}</td></tr>`;
@@ -131,6 +139,52 @@ function componi({ progetto, documenti, analisi }) {
 
   h += `<p class="nota" style="margin-top:8mm">Analisi preparata con l'assistente AI del Portale Zoffoli.
     I dati importanti vanno verificati sui documenti originali.</p>`;
+  return h;
+}
+
+// Sezione "Rendimento del macchinario" (dai dati di produzione Excel)
+function componiRendimento(r) {
+  const g = GIUDIZIO_RENDIMENTO[r.giudizio?.valutazione];
+  let h = `<h2>Rendimento del macchinario</h2>`;
+  if (r.periodo_analizzato) h += `<p class="nota">Periodo analizzato: ${e(r.periodo_analizzato)}</p>`;
+  if (r.riepilogo) h += `<p>${e(r.riepilogo)}</p>`;
+  if (r.giudizio) {
+    h += `<div class="consigliato"><div class="pallino ${e(r.giudizio.valutazione)}">● ${g || "Giudizio"}</div>
+      <p>${e(r.giudizio.spiegazione)}</p></div>`;
+  }
+
+  if (r.indicatori?.length) {
+    h += `<h3>Indicatori principali</h3><table><thead><tr><th>Indicatore</th><th>Valore</th><th>Confronto</th></tr></thead><tbody>`;
+    for (const i of r.indicatori) {
+      h += `<tr><td><strong>${e(i.nome)}</strong><small>${e(i.cosa_significa)}</small></td>
+        <td class="${e(i.giudizio)}"><strong>${e(i.valore)}</strong></td><td>${e(i.riferimento)}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+  }
+  if (r.andamento?.length) {
+    h += `<h3>Andamento nel tempo</h3><table><thead><tr><th>Periodo</th><th>Numeri principali</th><th>Commento</th></tr></thead><tbody>`;
+    for (const p of r.andamento) {
+      h += `<tr><td><strong>${e(p.periodo)}</strong></td><td class="${e(p.giudizio)}">${e(p.valori)}</td><td>${e(p.commento)}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+  }
+  if (r.fermi_e_problemi?.length) {
+    h += `<h3>Fermi e problemi principali</h3><table><thead><tr><th>Problema</th><th>Quanto pesa</th><th>Spiegazione</th></tr></thead><tbody>`;
+    for (const f of r.fermi_e_problemi) {
+      h += `<tr><td><strong>${e(f.problema)}</strong></td><td>${e(f.quanto_pesa)}</td><td>${e(f.spiegazione)}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+  }
+  if (r.cosa_va_bene?.length) h += `<h3>Cosa funziona bene</h3>${lista(r.cosa_va_bene)}`;
+  if (r.consigli?.length) {
+    h += `<h3>Consigli</h3>`;
+    for (const c of r.consigli) {
+      h += `<div class="attenzione"><span class="gravita ${c.priorita === "alta" ? "alta" : ""}">PRIORITÀ ${e((c.priorita || "").toUpperCase())}</span>
+        <strong>${e(c.azione)}</strong><p>${e(c.perche)}<br><em>Beneficio atteso: ${e(c.beneficio_atteso)}</em></p></div>`;
+    }
+  }
+  if (r.dati_mancanti?.length) h += `<h3>Per uno studio più preciso servirebbero</h3>${lista(r.dati_mancanti)}`;
+  if (r.metodo) h += `<div class="etichetta">Come sono stati calcolati i numeri</div><p class="nota">${e(r.metodo)}</p>`;
   return h;
 }
 
